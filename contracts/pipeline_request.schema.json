@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FramePipelineRequest",
+  "type": "object",
+  "required": ["frame_id", "image_base64", "target_language"],
+  "properties": {
+    "frame_id": { "type": "string" },
+    "image_base64": { "type": "string" },
+    "target_language": { "type": "string", "default": "vi" },
+    "mode": { "type": "string", "default": "slide_translation" },
+    "mock": { "type": "boolean", "default": true },
+    "image_width": { "type": "integer" },
+    "image_height": { "type": "integer" }
+  }
+}

@@ -1,0 +1,7 @@
+Flask==3.0.3
+flask-cors==4.0.1
+Pillow==10.4.0
+requests==2.32.3
+pytest==8.3.2
+# Optional OCR wrapper. Cần cài binary Tesseract riêng trên máy nếu muốn OCR thật.
+pytesseract==0.3.13

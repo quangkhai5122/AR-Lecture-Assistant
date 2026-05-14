@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.pytest_cache/
+
+# Unity generated folders - do not commit
+client-unity/Library/
+client-unity/Temp/
+client-unity/Obj/
+client-unity/Build/
+client-unity/Builds/
+client-unity/Logs/
+client-unity/UserSettings/
+client-unity/MemoryCaptures/
+client-unity/*.csproj
+client-unity/*.sln
+client-unity/*.user
+client-unity/*.pidb
+client-unity/*.booproj
+client-unity/*.svd
+client-unity/*.pdb
+client-unity/*.mdb
+
+# OS
+.DS_Store
+Thumbs.db
