@@ -148,6 +148,61 @@ def test_translation_cache_avoids_second_request(monkeypatch):
     assert second.cache_hits == 1
 
 
+def test_google_translation_provider_uses_api_key_and_cache(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "data": {
+                    "translations": [
+                        {"translatedText": "Học máy"},
+                        {"translatedText": "Học sâu"},
+                    ]
+                }
+            }
+
+    def fake_post(url, params, json, timeout):
+        calls.append((url, params, json, timeout))
+        return FakeResponse()
+
+    monkeypatch.setenv("GOOGLE_TRANSLATE_API_KEY", "test-key")
+    monkeypatch.setattr("services.translation_service.requests.post", fake_post)
+
+    service = TranslationService()
+    first = service.translate_batch(
+        ["Machine learning", "Deep learning"],
+        target_language="vi",
+        force_mock=False,
+        provider="google",
+    )
+    second = service.translate_batch(
+        ["Machine learning", "Deep learning"],
+        target_language="vi",
+        force_mock=False,
+        provider="google",
+    )
+
+    assert first.translations == ["Học máy", "Học sâu"]
+    assert second.translations == ["Học máy", "Học sâu"]
+    assert len(calls) == 1
+    assert calls[0][1] == {"key": "test-key"}
+    assert calls[0][2]["q"] == ["Machine learning", "Deep learning"]
+    assert calls[0][2]["source"] == "en"
+    assert second.cache_hits == 2
+
+
+def test_google_translation_requires_api_key(monkeypatch):
+    monkeypatch.delenv("GOOGLE_TRANSLATE_API_KEY", raising=False)
+    service = TranslationService()
+    with pytest.raises(Exception) as exc_info:
+        service.translate_batch(["Hello"], target_language="vi", force_mock=False, provider="google")
+    assert "GOOGLE_TRANSLATE_API_KEY" in str(exc_info.value)
+
+
 def test_invalid_pipeline_request_returns_400():
     client = app.test_client()
     response = client.post("/pipeline/frame", json={"frame_id": "missing-fields"})
