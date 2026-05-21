@@ -1,7 +1,15 @@
 Flask==3.0.3
 flask-cors==4.0.1
+numpy==1.26.4
 Pillow==10.4.0
 requests==2.32.3
 pytest==8.3.2
-# Optional OCR wrapper. Cần cài binary Tesseract riêng trên máy nếu muốn OCR thật.
-pytesseract==0.3.13
+
+# Real OCR provider used by OCR_PROVIDER=paddleocr.
+# Do not list paddlepaddle-gpu here: keep the CUDA-specific Paddle install
+# that already works in D:\conda_envs\paddleocr_gpu.
+# paddleocr==3.5.0
+
+# Optional OCR provider used by OCR_PROVIDER=tesseract.
+# Requires the Tesseract binary to be installed separately on Windows.
+# pytesseract==0.3.13
