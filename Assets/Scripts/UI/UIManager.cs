@@ -34,6 +34,13 @@ public class UIManager : MonoBehaviour
 
     private void InitializeApp()
     {
+        ARLectureVisualPolish polish = GetComponent<ARLectureVisualPolish>();
+        if (polish == null)
+        {
+            polish = gameObject.AddComponent<ARLectureVisualPolish>();
+        }
+        polish.Apply();
+
         // Bắt đầu ở trạng thái Idle
         stateManager.SetState(AppState.Idle);
 

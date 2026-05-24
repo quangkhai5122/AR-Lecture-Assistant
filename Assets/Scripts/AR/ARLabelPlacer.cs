@@ -39,6 +39,7 @@ public class ARLabelPlacer : MonoBehaviour
             if (textComp != null)
                 textComp.text = translatedText;
 
+            ARLectureVisualPolish.StyleLabel(label);
             fixedLabels.Add(label);
         }
     }
@@ -57,6 +58,8 @@ public class ARLabelPlacer : MonoBehaviour
         var textComp = currentSubtitle.GetComponentInChildren<TextMeshProUGUI>();
         if (textComp != null)
             textComp.text = translatedText;
+
+        ARLectureVisualPolish.StyleSubtitle(currentSubtitle);
     }
 
     /// <summary>

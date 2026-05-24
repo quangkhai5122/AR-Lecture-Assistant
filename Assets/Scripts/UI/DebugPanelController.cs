@@ -51,7 +51,7 @@ public class DebugPanelController : MonoBehaviour
 
     public void ClearAll()
     {
-        ocrTextField.text = "OCR Raw: —";
-        translatedTextField.text = "Translated: —";
+        ocrTextField.text = "OCR Raw:\n-";
+        translatedTextField.text = "Translated:\n-";
     }
 }

@@ -1,4 +1,5 @@
 ﻿// StateManager.cs
+using System.Collections;
 using UnityEngine;
 using UnityEngine.Events;
 using TMPro;
@@ -12,13 +13,16 @@ public class StateManager : MonoBehaviour
     public UnityEvent<AppState> OnStateChanged;
 
     private AppState currentState = AppState.Idle;
+    private Coroutine statusTransition;
+    private bool hasInitializedState;
 
     public AppState CurrentState => currentState;
 
     public void SetState(AppState newState)
     {
-        if (currentState == newState) return;
+        if (hasInitializedState && currentState == newState) return;
 
+        hasInitializedState = true;
         currentState = newState;
         UpdateStatusUI();
         OnStateChanged?.Invoke(newState);
@@ -26,32 +30,66 @@ public class StateManager : MonoBehaviour
 
     private void UpdateStatusUI()
     {
+        string message = "Sẵn sàng";
+        Color targetColor = new Color(0.12f, 0.14f, 0.18f, 0.82f);
+
         switch (currentState)
         {
             case AppState.Idle:
-                statusText.text = "Sẵn sàng";
-                statusBackground.color = new Color(0.5f, 0.5f, 0.5f, 0.7f);
+                message = "Sẵn sàng";
+                targetColor = new Color(0.12f, 0.14f, 0.18f, 0.82f);
                 break;
             case AppState.Scanning:
-                statusText.text = "🔍 Đang quét...";
-                statusBackground.color = new Color(0.2f, 0.6f, 1f, 0.7f);
+                message = "Đang quét bảng/slide...";
+                targetColor = new Color(0.26f, 0.42f, 0.92f, 0.86f);
                 break;
             case AppState.PlaneDetected:
-                statusText.text = "✅ Đã phát hiện bảng/slide";
-                statusBackground.color = new Color(0.2f, 0.8f, 0.4f, 0.7f);
+                message = "Đã phát hiện bảng/slide";
+                targetColor = new Color(0.15f, 0.72f, 0.45f, 0.86f);
                 break;
             case AppState.Translating:
-                statusText.text = "⏳ Đang dịch...";
-                statusBackground.color = new Color(1f, 0.8f, 0.2f, 0.7f);
+                message = "Đang dịch nội dung...";
+                targetColor = new Color(0.82f, 0.58f, 0.18f, 0.88f);
                 break;
             case AppState.Anchored:
-                statusText.text = "📌 Đã ghim bản dịch";
-                statusBackground.color = new Color(0.2f, 0.8f, 0.4f, 0.7f);
+                message = "Đã ghim bản dịch";
+                targetColor = new Color(0.15f, 0.72f, 0.45f, 0.86f);
                 break;
             case AppState.Error:
-                statusText.text = "❌ Lỗi — Thử lại";
-                statusBackground.color = new Color(1f, 0.3f, 0.3f, 0.7f);
+                message = "Có lỗi, hãy thử lại";
+                targetColor = new Color(0.92f, 0.22f, 0.22f, 0.88f);
                 break;
         }
+
+        if (statusText != null) statusText.text = message;
+        if (statusBackground == null) return;
+
+        if (statusTransition != null) StopCoroutine(statusTransition);
+        statusTransition = StartCoroutine(AnimateStatus(targetColor));
+    }
+
+    private IEnumerator AnimateStatus(Color targetColor)
+    {
+        RectTransform rect = statusBackground.transform as RectTransform;
+        Color startColor = statusBackground.color;
+        Vector3 startScale = rect != null ? rect.localScale : Vector3.one;
+        Vector3 pulseScale = Vector3.one * 1.035f;
+        const float duration = 0.22f;
+
+        for (float elapsed = 0f; elapsed < duration; elapsed += Time.deltaTime)
+        {
+            float t = Mathf.SmoothStep(0f, 1f, elapsed / duration);
+            statusBackground.color = Color.Lerp(startColor, targetColor, t);
+            if (rect != null)
+            {
+                rect.localScale = Vector3.Lerp(startScale, pulseScale, Mathf.Sin(t * Mathf.PI));
+            }
+
+            yield return null;
+        }
+
+        statusBackground.color = targetColor;
+        if (rect != null) rect.localScale = Vector3.one;
+        statusTransition = null;
     }
 }
