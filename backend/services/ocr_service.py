@@ -152,7 +152,11 @@ class OCRService:
         try:
             import numpy as np  # type: ignore
         except Exception as exc:
-            raise PipelineError("PaddleOCR provider requires numpy in the active environment.") from exc
+            raise PipelineError(
+                "PaddleOCR provider requires numpy in the active environment.",
+                status_code=503,
+                code="ocr_provider_not_available",
+            ) from exc
 
         ocr = self._get_paddle_ocr()
         min_confidence = self._min_confidence()
@@ -184,7 +188,9 @@ class OCRService:
             from paddleocr import PaddleOCR  # type: ignore
         except Exception as exc:
             raise PipelineError(
-                "OCR_PROVIDER=paddleocr requires the backend to run inside the paddleocr_gpu environment."
+                "OCR_PROVIDER=paddleocr requires the backend to run inside the paddleocr_gpu environment.",
+                status_code=503,
+                code="ocr_provider_not_available",
             ) from exc
 
         device = os.getenv("PADDLEOCR_DEVICE", "gpu" if use_gpu else "cpu")
@@ -356,7 +362,11 @@ class OCRService:
         try:
             import pytesseract  # type: ignore
         except Exception as exc:
-            raise PipelineError("OCR_PROVIDER=tesseract requires pytesseract to be installed.") from exc
+            raise PipelineError(
+                "OCR_PROVIDER=tesseract requires pytesseract to be installed.",
+                status_code=503,
+                code="ocr_provider_not_available",
+            ) from exc
 
         cmd = os.getenv("TESSERACT_CMD")
         if cmd:

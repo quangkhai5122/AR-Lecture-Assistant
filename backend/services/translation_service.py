@@ -195,6 +195,13 @@ class TranslationService:
                 code="translation_provider_failed",
             ) from exc
 
+        if not isinstance(data, dict):
+            raise PipelineError(
+                f"Unexpected LibreTranslate response shape: {data}",
+                status_code=502,
+                code="translation_provider_bad_response",
+            )
+
         translated = data.get("translatedText")
         if isinstance(translated, str):
             if len(texts) == 1:
@@ -241,7 +248,14 @@ class TranslationService:
                 code="translation_provider_failed",
             ) from exc
 
-        translations = data.get("data", {}).get("translations")
+        if not isinstance(data, dict) or not isinstance(data.get("data"), dict):
+            raise PipelineError(
+                f"Unexpected Google Translate response shape: {data}",
+                status_code=502,
+                code="translation_provider_bad_response",
+            )
+
+        translations = data["data"].get("translations")
         if not isinstance(translations, list) or len(translations) != len(texts):
             raise PipelineError(
                 f"Unexpected Google Translate response shape: {data}",
