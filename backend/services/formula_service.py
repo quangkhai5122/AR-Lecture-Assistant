@@ -83,5 +83,5 @@ class FormulaService:
                     rf"\[\s*F?ORMULA[\s_\-]*{index}\s*\]",
                     flags=re.IGNORECASE,
                 )
-                restored = placeholder_pattern.sub(original, restored)
+                restored = placeholder_pattern.sub(lambda _: original, restored)
         return restored

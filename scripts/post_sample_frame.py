@@ -48,9 +48,21 @@ def main():
 
     response = requests.post(args.url, json=payload, timeout=args.timeout)
     if not response.ok:
-        print(json.dumps(response.json(), ensure_ascii=False, indent=2))
+        _print_response_body(response)
         response.raise_for_status()
     print(json.dumps(response.json(), ensure_ascii=False, indent=2))
+
+
+def _print_response_body(response: requests.Response) -> None:
+    content_type = response.headers.get("content-type", "")
+    if "application/json" in content_type.lower():
+        try:
+            print(json.dumps(response.json(), ensure_ascii=False, indent=2))
+            return
+        except ValueError:
+            pass
+
+    print(response.text)
 
 
 if __name__ == "__main__":

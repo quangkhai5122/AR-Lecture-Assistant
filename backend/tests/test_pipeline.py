@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import base64
+import builtins
+import importlib.util
 import io
+from pathlib import Path
 
 import pytest
+import requests
 from PIL import Image
 
 from app import app
+from services.errors import PipelineError
 from services.ocr_service import OCRService
 from services.pipeline_service import PipelineService
 from services.translation_service import TranslationService

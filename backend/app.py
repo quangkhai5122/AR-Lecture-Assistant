@@ -5,7 +5,7 @@ from typing import Any
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from werkzeug.exceptions import BadRequest
+from werkzeug.exceptions import BadRequest, HTTPException
 
 from services.errors import PipelineError
 from services.pipeline_service import PipelineService
@@ -38,6 +38,14 @@ def handle_bad_request(exc: BadRequest):
 
 @app.errorhandler(Exception)
 def handle_unexpected_error(exc: Exception):
+    if isinstance(exc, HTTPException):
+        return jsonify({
+            "error": {
+                "code": exc.name.lower().replace(" ", "_"),
+                "message": exc.description,
+            }
+        }), exc.code or 500
+
     app.logger.exception("Unhandled backend error")
     return jsonify({
         "error": {
