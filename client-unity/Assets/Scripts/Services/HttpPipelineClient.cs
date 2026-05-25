@@ -35,7 +35,9 @@ namespace ARLectureTranslator.Services
                 image_base64 = imageBase64,
                 target_language = targetLanguage,
                 mode = "slide_translation",
-                mock = mock
+                mock = mock,
+                image_width = imageWidth,
+                image_height = imageHeight
             };
 
             string json = JsonUtility.ToJson(payload);

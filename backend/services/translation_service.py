@@ -1,23 +1,29 @@
 from __future__ import annotations
 
 import os
+from html import unescape
+from dataclasses import dataclass
 from typing import Any
 
 import requests
 
+from services.errors import PipelineError
+
+
+@dataclass
+class TranslationResult:
+    translations: list[str]
+    provider: str
+    mock_used: bool
+    warnings: list[str]
+    cache_hits: int = 0
+    cache_misses: int = 0
+
 
 class TranslationService:
-    """Translation layer.
+    """Translation provider adapter with batch calls and in-memory caching."""
 
-    MVP có mock translation để demo không phụ thuộc API/network.
-
-    TODO(MVP) Translation:
-    - Chọn dịch thật: ML Kit on-device, Google Cloud Translation, OpenAI, NLLB, MarianMT, LibreTranslate.
-    - Thêm glossary thuật ngữ AI/ML theo môn học.
-    - Thêm batch translate để giảm latency.
-    - Thêm cache theo source_text để không dịch lại liên tục.
-    - Đánh dấu language detection nếu slide không phải tiếng Anh.
-    """
+    SUPPORTED_PROVIDERS = {"mock", "libretranslate", "google"}
 
     GLOSSARY = {
         "machine learning": "học máy",
@@ -40,22 +46,135 @@ class TranslationService:
         "Machine learning is a field of artificial intelligence.": "Học máy là một lĩnh vực của trí tuệ nhân tạo.",
     }
 
-    def translate(self, text: str, target_language: str = "vi") -> str:
-        if not text.strip():
-            return text
+    def __init__(self):
+        self._cache: dict[tuple[str, str, str], str] = {}
 
-        libre_url = os.getenv("LIBRETRANSLATE_URL")
-        if libre_url:
-            try:
-                return self._translate_libre(text, target_language, libre_url)
-            except Exception as exc:
-                print(f"[TranslationService] LibreTranslate failed, fallback mock: {exc}")
+    def translate_batch(
+        self,
+        texts: list[str],
+        target_language: str = "vi",
+        force_mock: bool = True,
+        provider: str | None = None,
+    ) -> TranslationResult:
+        resolved_provider = self._resolve_provider(force_mock, provider)
+        if not texts:
+            return TranslationResult(
+                translations=[],
+                provider=resolved_provider,
+                mock_used=resolved_provider == "mock",
+                warnings=[],
+            )
 
-        return self._mock_translate(text)
+        if resolved_provider == "mock":
+            return TranslationResult(
+                translations=[self._mock_translate(text) for text in texts],
+                provider="mock",
+                mock_used=True,
+                warnings=[],
+            )
 
-    def _translate_libre(self, text: str, target_language: str, url: str) -> str:
+        provider_config = self._provider_config(resolved_provider)
+
+        results: list[str | None] = [None] * len(texts)
+        missing_texts: list[str] = []
+        missing_keys: list[tuple[str, str, str]] = []
+        missing_indexes: list[int] = []
+        cache_hits = 0
+
+        for index, text in enumerate(texts):
+            key = self._cache_key(resolved_provider, target_language, text)
+            if key in self._cache:
+                results[index] = self._cache[key]
+                cache_hits += 1
+            else:
+                missing_texts.append(text)
+                missing_keys.append(key)
+                missing_indexes.append(index)
+
+        if missing_texts:
+            translated = self._translate_provider_batch(
+                resolved_provider,
+                missing_texts,
+                target_language,
+                provider_config,
+            )
+            for key, index, translated_text in zip(missing_keys, missing_indexes, translated):
+                self._cache[key] = translated_text
+                results[index] = translated_text
+
+        return TranslationResult(
+            translations=[text if text is not None else "" for text in results],
+            provider=resolved_provider,
+            mock_used=False,
+            warnings=[],
+            cache_hits=cache_hits,
+            cache_misses=len(missing_texts),
+        )
+
+    def translate(
+        self,
+        text: str,
+        target_language: str = "vi",
+        force_mock: bool = True,
+        provider: str | None = None,
+    ) -> str:
+        return self.translate_batch([text], target_language, force_mock, provider).translations[0]
+
+    def _resolve_provider(self, force_mock: bool, provider: str | None) -> str:
+        if force_mock:
+            return "mock"
+
+        selected = (provider or os.getenv("TRANSLATION_PROVIDER") or "libretranslate").strip().lower()
+        if selected not in self.SUPPORTED_PROVIDERS:
+            raise PipelineError(
+                "Unsupported translation provider "
+                f"'{selected}'. Expected one of: {sorted(self.SUPPORTED_PROVIDERS)}."
+            )
+        return selected
+
+    def _provider_config(self, provider: str) -> dict[str, str]:
+        if provider == "libretranslate":
+            libre_url = os.getenv("LIBRETRANSLATE_URL")
+            if not libre_url:
+                raise PipelineError(
+                    "TRANSLATION_PROVIDER=libretranslate requires LIBRETRANSLATE_URL.",
+                    code="translation_provider_not_configured",
+                )
+            return {"url": libre_url}
+
+        if provider == "google":
+            api_key = os.getenv("GOOGLE_TRANSLATE_API_KEY")
+            if not api_key:
+                raise PipelineError(
+                    "TRANSLATION_PROVIDER=google requires GOOGLE_TRANSLATE_API_KEY.",
+                    code="translation_provider_not_configured",
+                )
+            return {
+                "url": os.getenv(
+                    "GOOGLE_TRANSLATE_URL",
+                    "https://translation.googleapis.com/language/translate/v2",
+                ),
+                "api_key": api_key,
+            }
+
+        raise PipelineError(f"Unsupported translation provider: {provider}")
+
+    def _translate_provider_batch(
+        self,
+        provider: str,
+        texts: list[str],
+        target_language: str,
+        config: dict[str, str],
+    ) -> list[str]:
+        if provider == "libretranslate":
+            return self._translate_libre_batch(texts, target_language, config["url"])
+        if provider == "google":
+            return self._translate_google_batch(texts, target_language, config["url"], config["api_key"])
+        raise PipelineError(f"Unsupported translation provider: {provider}")
+
+    def _translate_libre_batch(self, texts: list[str], target_language: str, url: str) -> list[str]:
         payload: dict[str, Any] = {
-            "q": text,
+            "q": texts if len(texts) > 1 else texts[0],
             "source": "auto",
             "target": target_language,
             "format": "text",
@@ -64,10 +183,86 @@ class TranslationService:
         if api_key:
             payload["api_key"] = api_key
 
-        response = requests.post(url, json=payload, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        return data.get("translatedText", text)
+        timeout = float(os.getenv("LIBRETRANSLATE_TIMEOUT_SECONDS", "15"))
+        try:
+            response = requests.post(url, json=payload, timeout=timeout)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            raise PipelineError(
+                f"LibreTranslate request failed: {exc}",
+                status_code=502,
+                code="translation_provider_failed",
+            ) from exc
+
+        translated = data.get("translatedText")
+        if isinstance(translated, str):
+            if len(texts) == 1:
+                return [translated]
+            raise PipelineError(
+                "LibreTranslate returned a single translation for a batch request.",
+                status_code=502,
+                code="translation_provider_bad_response",
+            )
+        if isinstance(translated, list) and len(translated) == len(texts):
+            return [str(item) for item in translated]
+
+        raise PipelineError(
+            f"Unexpected LibreTranslate response shape: {data}",
+            status_code=502,
+            code="translation_provider_bad_response",
+        )
+
+    def _translate_google_batch(
+        self,
+        texts: list[str],
+        target_language: str,
+        url: str,
+        api_key: str,
+    ) -> list[str]:
+        payload: dict[str, Any] = {
+            "q": texts,
+            "target": target_language,
+            "format": "text",
+        }
+        source_language = os.getenv("GOOGLE_TRANSLATE_SOURCE_LANGUAGE", "en").strip()
+        if source_language:
+            payload["source"] = source_language
+
+        timeout = float(os.getenv("GOOGLE_TRANSLATE_TIMEOUT_SECONDS", "20"))
+        try:
+            response = requests.post(url, params={"key": api_key}, json=payload, timeout=timeout)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            raise PipelineError(
+                f"Google Translate request failed: {exc}",
+                status_code=502,
+                code="translation_provider_failed",
+            ) from exc
+
+        translations = data.get("data", {}).get("translations")
+        if not isinstance(translations, list) or len(translations) != len(texts):
+            raise PipelineError(
+                f"Unexpected Google Translate response shape: {data}",
+                status_code=502,
+                code="translation_provider_bad_response",
+            )
+
+        translated_texts: list[str] = []
+        for item in translations:
+            if not isinstance(item, dict) or "translatedText" not in item:
+                raise PipelineError(
+                    f"Unexpected Google Translate item shape: {item}",
+                    status_code=502,
+                    code="translation_provider_bad_response",
+                )
+            translated_texts.append(unescape(str(item["translatedText"])))
+        return translated_texts
+
+
+    def _cache_key(self, provider: str, target_language: str, text: str) -> tuple[str, str, str]:
+        return (provider, target_language, " ".join(text.split()))
 
     def _mock_translate(self, text: str) -> str:
         if text in self.MOCK_SENTENCES:
@@ -76,7 +271,6 @@ class TranslationService:
         lowered = text.lower()
         translated = text
 
-        # Heuristic cực đơn giản để demo glossary. Không dùng cho production.
         for src, vi in sorted(self.GLOSSARY.items(), key=lambda kv: len(kv[0]), reverse=True):
             if src in lowered:
                 translated = translated.replace(src, vi)
@@ -85,6 +279,4 @@ class TranslationService:
 
         if translated != text:
             return translated
-
-        # Fallback rõ ràng để người demo biết đây chưa phải dịch thật.
         return f"[VI-MOCK] {text}"
