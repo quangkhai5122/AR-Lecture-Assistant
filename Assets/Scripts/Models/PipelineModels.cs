@@ -18,6 +18,41 @@ public class FramePipelineRequest
 }
 
 [Serializable]
+public class OCRRequest
+{
+    public string image_base64;
+    public bool mock = false;
+    public int image_width;
+    public int image_height;
+    public string ocr_provider;
+}
+
+[Serializable]
+public class TranslateRequest
+{
+    public string target_language = "vi";
+    public bool mock = false;
+    public List<TranslateTextItem> texts = new List<TranslateTextItem>();
+    public string translation_provider;
+}
+
+[Serializable]
+public class TranslateTextItem
+{
+    public string id;
+    public string text;
+}
+
+[Serializable]
+public class BackendHealthResponse
+{
+    public string status;
+    public string service;
+    public string mode;
+    public PipelineProvider provider;
+}
+
+[Serializable]
 public class PipelineResponse
 {
     public string frame_id;
@@ -28,6 +63,44 @@ public class PipelineResponse
     public bool mock_used;
     public string[] warnings;
     public PipelineLatency latency_ms;
+}
+
+[Serializable]
+public class OCRResponse
+{
+    public int image_width;
+    public int image_height;
+    public List<OCRBlock> blocks = new List<OCRBlock>();
+    public PipelineProvider provider;
+    public bool mock_used;
+    public string[] warnings;
+}
+
+[Serializable]
+public class OCRBlock
+{
+    public string id;
+    public string text;
+    public float[] bbox;
+    public float confidence;
+}
+
+[Serializable]
+public class TranslateResponse
+{
+    public List<TranslationBlock> translations = new List<TranslationBlock>();
+    public PipelineProvider provider;
+    public bool mock_used;
+    public string[] warnings;
+}
+
+[Serializable]
+public class TranslationBlock
+{
+    public string id;
+    public string source_text;
+    public string translated_text;
+    public string type;
 }
 
 [Serializable]

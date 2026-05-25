@@ -86,6 +86,83 @@ public class DebugPanelController : MonoBehaviour
         UpdateTranslatedText(translatedBuilder.ToString());
     }
 
+    public void UpdateBackendHealth(BackendHealthResponse health)
+    {
+        if (health == null)
+        {
+            UpdateTrackingState("Backend unknown");
+            return;
+        }
+
+        string ocrProvider = health.provider != null ? health.provider.ocr : "-";
+        string translationProvider = health.provider != null ? health.provider.translation : "-";
+        UpdateTrackingState($"Backend {health.status} | OCR={ocrProvider} | Trans={translationProvider}");
+    }
+
+    public void UpdateOCRResponse(OCRResponse response)
+    {
+        if (response == null)
+        {
+            UpdateOCRText("-");
+            return;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"Provider: {response.provider?.ocr ?? "-"}");
+        builder.AppendLine($"Blocks: {response.blocks?.Count ?? 0}");
+
+        if (response.blocks != null)
+        {
+            foreach (OCRBlock block in response.blocks)
+            {
+                builder.AppendLine($"[{block.id}] {block.text}");
+            }
+        }
+
+        if (response.warnings != null && response.warnings.Length > 0)
+        {
+            builder.AppendLine("Warnings:");
+            foreach (string warning in response.warnings)
+            {
+                builder.AppendLine($"- {warning}");
+            }
+        }
+
+        UpdateOCRText(builder.ToString());
+    }
+
+    public void UpdateTranslateResponse(TranslateResponse response)
+    {
+        if (response == null)
+        {
+            UpdateTranslatedText("-");
+            return;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"Provider: {response.provider?.translation ?? "-"}");
+        builder.AppendLine($"Blocks: {response.translations?.Count ?? 0}");
+
+        if (response.translations != null)
+        {
+            foreach (TranslationBlock block in response.translations)
+            {
+                builder.AppendLine($"[{block.id}] {block.translated_text}");
+            }
+        }
+
+        if (response.warnings != null && response.warnings.Length > 0)
+        {
+            builder.AppendLine("Warnings:");
+            foreach (string warning in response.warnings)
+            {
+                builder.AppendLine($"- {warning}");
+            }
+        }
+
+        UpdateTranslatedText(builder.ToString());
+    }
+
     public void UpdateTrackingState(string state)
     {
         trackingStateText.text = $"Tracking: {state}";

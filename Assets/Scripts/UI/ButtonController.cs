@@ -1,9 +1,17 @@
 ﻿// ButtonController.cs
 using System;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
+
+public enum BackendPipelineMode
+{
+    PipelineFrame,
+    PipelineAlias,
+    SplitOcrTranslate
+}
 
 public class ButtonController : MonoBehaviour
 {
@@ -19,6 +27,9 @@ public class ButtonController : MonoBehaviour
     [SerializeField] private bool backendMockMode = false;
     [SerializeField] private bool fallbackToUnityMockOnBackendError = true;
     [SerializeField] private string targetLanguage = "vi";
+    [SerializeField] private BackendPipelineMode backendPipelineMode = BackendPipelineMode.PipelineFrame;
+    [SerializeField] private string ocrProvider = "";
+    [SerializeField] private string translationProvider = "";
     [SerializeField] private FrameCaptureService frameCaptureService;
     [SerializeField] private HttpPipelineClient httpPipelineClient;
 
@@ -59,6 +70,7 @@ public class ButtonController : MonoBehaviour
         UpdateButtonStates();
         UpdateFreezeVisual();
         debugPanel?.UpdateTrackingState("Idle");
+        _ = CheckBackendHealthAsync();
     }
 
     private void OnDestroy()
@@ -77,6 +89,7 @@ public class ButtonController : MonoBehaviour
         UpdateFreezeVisual();
         debugPanel?.UpdateTrackingState("Scanning");
         stateManager.SetState(AppState.Scanning);
+        _ = CheckBackendHealthAsync();
     }
 
     private async void OnTranslatePressed()
@@ -135,15 +148,7 @@ public class ButtonController : MonoBehaviour
         {
             try
             {
-                debugPanel?.UpdateTrackingState("Calling backend OCR/Translate");
-                return await httpPipelineClient.SendFrameAsync(
-                    frame.frameId,
-                    frame.imageBase64,
-                    frame.width,
-                    frame.height,
-                    targetLanguage,
-                    backendMockMode
-                );
+                return await RunBackendPipelineAsync(frame);
             }
             catch (Exception)
             {
@@ -162,6 +167,90 @@ public class ButtonController : MonoBehaviour
             targetLanguage,
             mock: true
         );
+    }
+
+    private async System.Threading.Tasks.Task<PipelineResponse> RunBackendPipelineAsync(CapturedFrame frame)
+    {
+        switch (backendPipelineMode)
+        {
+            case BackendPipelineMode.PipelineAlias:
+                debugPanel?.UpdateTrackingState("Backend /pipeline");
+                return await httpPipelineClient.SendPipelineAliasAsync(
+                    frame.frameId,
+                    frame.imageBase64,
+                    frame.width,
+                    frame.height,
+                    targetLanguage,
+                    backendMockMode
+                );
+
+            case BackendPipelineMode.SplitOcrTranslate:
+                debugPanel?.UpdateTrackingState("Backend /ocr");
+                OCRResponse ocrResponse = await httpPipelineClient.SendOcrAsync(
+                    frame.imageBase64,
+                    frame.width,
+                    frame.height,
+                    backendMockMode,
+                    ocrProvider
+                );
+
+                debugPanel?.UpdateOCRResponse(ocrResponse);
+                debugPanel?.UpdateTrackingState("Backend /translate");
+                TranslateResponse translateResponse = await httpPipelineClient.SendTranslateAsync(
+                    BuildTranslateItems(ocrResponse),
+                    targetLanguage,
+                    backendMockMode,
+                    translationProvider
+                );
+                debugPanel?.UpdateTranslateResponse(translateResponse);
+                return httpPipelineClient.ComposePipelineResponse(frame.frameId, ocrResponse, translateResponse);
+
+            case BackendPipelineMode.PipelineFrame:
+            default:
+                debugPanel?.UpdateTrackingState("Backend /pipeline/frame");
+                return await httpPipelineClient.SendFrameAsync(
+                    frame.frameId,
+                    frame.imageBase64,
+                    frame.width,
+                    frame.height,
+                    targetLanguage,
+                    backendMockMode
+                );
+        }
+    }
+
+    private List<TranslateTextItem> BuildTranslateItems(OCRResponse ocrResponse)
+    {
+        var texts = new List<TranslateTextItem>();
+        if (ocrResponse?.blocks == null) return texts;
+
+        foreach (OCRBlock block in ocrResponse.blocks)
+        {
+            if (block == null || string.IsNullOrWhiteSpace(block.text)) continue;
+            texts.Add(new TranslateTextItem
+            {
+                id = block.id,
+                text = block.text
+            });
+        }
+
+        return texts;
+    }
+
+    private async System.Threading.Tasks.Task CheckBackendHealthAsync()
+    {
+        if (!useBackendPipeline || httpPipelineClient == null) return;
+
+        try
+        {
+            BackendHealthResponse health = await httpPipelineClient.CheckHealthAsync();
+            debugPanel?.UpdateBackendHealth(health);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[ButtonController] Backend health check failed: {ex.Message}");
+            debugPanel?.UpdateTrackingState("Backend offline");
+        }
     }
 
     private async System.Threading.Tasks.Task<CapturedFrame> CaptureFrameForPipelineAsync()
