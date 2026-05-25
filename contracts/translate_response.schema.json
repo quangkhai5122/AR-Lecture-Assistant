@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranslateResponse",
+  "type": "object",
+  "required": ["translations", "provider", "mock_used", "warnings"],
+  "properties": {
+    "translations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "source_text", "translated_text", "type"],
+        "properties": {
+          "id": { "type": "string" },
+          "source_text": { "type": "string" },
+          "translated_text": { "type": "string" },
+          "type": { "type": "string", "enum": ["text", "formula", "mixed"] }
+        }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "required": ["translation"],
+      "properties": {
+        "translation": { "type": "string" }
+      }
+    },
+    "mock_used": { "type": "boolean" },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

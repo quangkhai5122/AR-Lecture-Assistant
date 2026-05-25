@@ -60,6 +60,7 @@ def health():
     })
 
 
+@app.post("/pipeline")
 @app.post("/pipeline/frame")
 def pipeline_frame():
     payload = _json_payload()
@@ -144,14 +145,13 @@ def _json_payload() -> dict[str, Any]:
 def _validate_frame_payload(payload: dict[str, Any]) -> None:
     _require_string(payload, "frame_id")
     _require_string(payload, "target_language")
-    _require_string(payload, "image_base64")
     _validate_common_payload(payload)
+    _validate_image_payload(payload, required=not bool(payload.get("mock", True)))
 
 
 def _validate_ocr_payload(payload: dict[str, Any]) -> None:
     _validate_common_payload(payload)
-    if not bool(payload.get("mock", True)):
-        _require_string(payload, "image_base64")
+    _validate_image_payload(payload, required=not bool(payload.get("mock", True)))
 
 
 def _validate_translate_payload(payload: dict[str, Any]) -> None:
@@ -191,6 +191,15 @@ def _validate_common_payload(payload: dict[str, Any]) -> None:
 def _require_string(payload: dict[str, Any], key: str) -> None:
     if not isinstance(payload.get(key), str) or not payload[key].strip():
         raise PipelineError(f"Field '{key}' is required and must be a non-empty string.")
+
+
+def _validate_image_payload(payload: dict[str, Any], required: bool) -> None:
+    if required:
+        _require_string(payload, "image_base64")
+        return
+
+    if "image_base64" in payload and not isinstance(payload["image_base64"], str):
+        raise PipelineError("Field 'image_base64' must be a string.")
 
 
 if __name__ == "__main__":

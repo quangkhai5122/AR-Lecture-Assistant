@@ -1,17 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "FramePipelineRequest",
+  "title": "OCRRequest",
   "type": "object",
-  "required": ["frame_id", "target_language"],
   "properties": {
-    "frame_id": { "type": "string", "minLength": 1 },
     "image_base64": {
       "type": "string",
       "default": "",
-      "description": "Base64 image data. Required when mock=false; optional in mock mode so Unity can call the mock server before frame capture is wired."
+      "description": "Base64 image data. Required when mock=false; optional in mock mode."
     },
-    "target_language": { "type": "string", "default": "vi", "minLength": 1 },
-    "mode": { "type": "string", "default": "slide_translation" },
     "mock": { "type": "boolean", "default": true },
     "image_width": { "type": "integer", "minimum": 1 },
     "image_height": { "type": "integer", "minimum": 1 },
@@ -19,11 +15,6 @@
       "type": "string",
       "enum": ["mock", "paddleocr", "tesseract"],
       "description": "Optional per-request override. If omitted, backend uses OCR_PROVIDER env var in real mode."
-    },
-    "translation_provider": {
-      "type": "string",
-      "enum": ["mock", "libretranslate", "google"],
-      "description": "Optional per-request override. If omitted, backend uses TRANSLATION_PROVIDER env var in real mode."
     }
   },
   "allOf": [

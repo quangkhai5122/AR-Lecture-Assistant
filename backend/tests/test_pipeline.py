@@ -49,6 +49,76 @@ def test_decoded_image_dimensions_are_used_even_if_hints_differ():
     assert any("image_width hint" in warning for warning in result["warnings"])
 
 
+def test_pipeline_endpoint_alias_accepts_mock_without_image():
+    client = app.test_client()
+    response = client.post("/pipeline", json={
+        "frame_id": "unity_day_one",
+        "target_language": "vi",
+        "mock": True,
+        "image_width": 1280,
+        "image_height": 720,
+    })
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["frame_id"] == "unity_day_one"
+    assert data["image_width"] == 1280
+    assert data["image_height"] == 720
+    assert data["provider"] == {"ocr": "mock", "translation": "mock"}
+    assert data["mock_used"] is True
+    assert data["blocks"]
+
+
+def test_pipeline_frame_real_mode_requires_image():
+    client = app.test_client()
+    response = client.post("/pipeline/frame", json={
+        "frame_id": "real_missing_image",
+        "target_language": "vi",
+        "mock": False,
+        "ocr_provider": "mock",
+        "translation_provider": "mock",
+    })
+    data = response.get_json()
+    assert response.status_code == 400
+    assert data["error"]["code"] == "pipeline_error"
+    assert "image_base64" in data["error"]["message"]
+
+
+def test_ocr_endpoint_accepts_mock_without_image():
+    client = app.test_client()
+    response = client.post("/ocr", json={
+        "mock": True,
+        "image_width": 640,
+        "image_height": 360,
+    })
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["image_width"] == 640
+    assert data["image_height"] == 360
+    assert data["provider"] == {"ocr": "mock"}
+    assert data["mock_used"] is True
+    assert data["blocks"]
+
+
+def test_translate_endpoint_mock_keeps_ids_and_formula_type():
+    client = app.test_client()
+    response = client.post("/translate", json={
+        "target_language": "vi",
+        "mock": True,
+        "texts": [
+            {"id": "b1", "text": "Deep learning uses neural networks."},
+            {"id": "f1", "text": "L = -Î£ y log(p)"},
+        ],
+    })
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["provider"] == {"translation": "mock"}
+    assert data["mock_used"] is True
+    assert [item["id"] for item in data["translations"]] == ["b1", "f1"]
+    assert data["translations"][0]["translated_text"]
+    assert data["translations"][1]["type"] == "formula"
+    assert data["translations"][1]["translated_text"] == "L = -Î£ y log(p)"
+
+
 def test_real_mode_without_libretranslate_url_fails(monkeypatch):
     monkeypatch.delenv("LIBRETRANSLATE_URL", raising=False)
     service = PipelineService()

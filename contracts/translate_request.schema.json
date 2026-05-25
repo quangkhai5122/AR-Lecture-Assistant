@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranslateRequest",
+  "type": "object",
+  "required": ["target_language", "texts"],
+  "properties": {
+    "target_language": { "type": "string", "default": "vi", "minLength": 1 },
+    "mock": { "type": "boolean", "default": true },
+    "translation_provider": {
+      "type": "string",
+      "enum": ["mock", "libretranslate", "google"],
+      "description": "Optional per-request override. If omitted, backend uses TRANSLATION_PROVIDER env var in real mode."
+    },
+    "texts": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["text"],
+            "properties": {
+              "id": { "type": "string", "default": "" },
+              "text": { "type": "string" }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

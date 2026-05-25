@@ -13,7 +13,10 @@
 
 - [ ] `python backend/app.py` chạy không lỗi.
 - [ ] `GET /health` trả ok.
-- [ ] `POST /pipeline/frame` với `mock=true` trả blocks.
+- [ ] `POST /pipeline` với `mock=true` trả blocks.
+- [ ] `POST /pipeline/frame` vẫn hoạt động để tương thích Unity script cũ.
+- [ ] Mock pipeline nhận request không có `image_base64` nếu Unity chưa nối frame capture.
+- [ ] `/ocr` và `/translate` có schema riêng trong `contracts/`.
 - [ ] Unity dùng `HttpPipelineClient` gọi được backend qua IP LAN.
 
 ## Integration 2 — OCR thật hoặc bán thật
