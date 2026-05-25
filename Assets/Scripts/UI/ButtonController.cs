@@ -1,4 +1,5 @@
 ﻿// ButtonController.cs
+using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -12,6 +13,14 @@ public class ButtonController : MonoBehaviour
     [SerializeField] private ARRaycastController raycastController;
     [SerializeField] private MockTranslationService translationService;
     [SerializeField] private ARPlaneManager arPlaneManager;
+
+    [Header("OCR / Translate Pipeline")]
+    [SerializeField] private bool useBackendPipeline = true;
+    [SerializeField] private bool backendMockMode = false;
+    [SerializeField] private bool fallbackToUnityMockOnBackendError = true;
+    [SerializeField] private string targetLanguage = "vi";
+    [SerializeField] private FrameCaptureService frameCaptureService;
+    [SerializeField] private HttpPipelineClient httpPipelineClient;
 
     [Header("Buttons")]
     [SerializeField] private Button scanButton;
@@ -29,6 +38,16 @@ public class ButtonController : MonoBehaviour
         if (arPlaneManager == null)
         {
             arPlaneManager = FindAnyObjectByType<ARPlaneManager>();
+        }
+        if (frameCaptureService == null)
+        {
+            frameCaptureService = GetComponent<FrameCaptureService>();
+            if (frameCaptureService == null) frameCaptureService = gameObject.AddComponent<FrameCaptureService>();
+        }
+        if (httpPipelineClient == null)
+        {
+            httpPipelineClient = GetComponent<HttpPipelineClient>();
+            if (httpPipelineClient == null) httpPipelineClient = gameObject.AddComponent<HttpPipelineClient>();
         }
 
         scanButton.onClick.AddListener(OnScanPressed);
@@ -73,20 +92,93 @@ public class ButtonController : MonoBehaviour
         stateManager.SetState(AppState.Translating);
         UpdateButtonStates();
 
-        // Mock: giả lập OCR + Translation
-        var result = await translationService.TranslateAsync(
-            "Sample lecture text on slide");
+        try
+        {
+            PipelineResponse response = await RunPipelineAsync();
+            debugPanel?.UpdatePipelineResponse(response);
 
-        debugPanel?.UpdateOCRText(result.OriginalText);
-        debugPanel?.UpdateTranslatedText(result.TranslatedText);
+            int placed = labelPlacer != null ? labelPlacer.PlacePipelineLabels(response) : 0;
+            if (placed == 0)
+            {
+                stateManager.SetState(AppState.Error);
+                debugPanel?.UpdateTrackingState("Pipeline OK, no AR hit");
+                Debug.LogWarning("[ButtonController] Pipeline returned blocks but no labels were placed. Scan plane again.");
+                return;
+            }
 
-        // Đặt label tại trung tâm màn hình
-        Vector2 center = new Vector2(
-            Screen.width / 2f, Screen.height / 2f);
-        labelPlacer.PlaceFixedLabel(result.TranslatedText, center);
+            if (response.blocks != null && response.blocks.Count > 0)
+            {
+                string subtitle = response.blocks[0].translated_text;
+                if (!string.IsNullOrWhiteSpace(subtitle))
+                {
+                    labelPlacer.ShowSubtitle(subtitle);
+                }
+            }
 
-        stateManager.SetState(AppState.Anchored);
-        debugPanel?.UpdateTrackingState(isFrozen ? "Frozen" : "Anchored");
+            stateManager.SetState(AppState.Anchored);
+            debugPanel?.UpdateTrackingState(isFrozen ? "Frozen" : $"Anchored ({placed})");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogException(ex);
+            stateManager.SetState(AppState.Error);
+            debugPanel?.UpdateTrackingState("Pipeline error");
+            debugPanel?.UpdateTranslatedText(ex.Message);
+        }
+    }
+
+    private async System.Threading.Tasks.Task<PipelineResponse> RunPipelineAsync()
+    {
+        CapturedFrame frame = await CaptureFrameForPipelineAsync();
+
+        if (useBackendPipeline && httpPipelineClient != null)
+        {
+            try
+            {
+                debugPanel?.UpdateTrackingState("Calling backend OCR/Translate");
+                return await httpPipelineClient.SendFrameAsync(
+                    frame.frameId,
+                    frame.imageBase64,
+                    frame.width,
+                    frame.height,
+                    targetLanguage,
+                    backendMockMode
+                );
+            }
+            catch (Exception)
+            {
+                if (!fallbackToUnityMockOnBackendError) throw;
+                Debug.LogWarning("[ButtonController] Backend pipeline failed, falling back to Unity mock pipeline.");
+            }
+        }
+
+        debugPanel?.UpdateTrackingState("Unity mock OCR/Translate");
+        var mockClient = new MockPipelineClient();
+        return await mockClient.SendFrameAsync(
+            frame.frameId,
+            frame.imageBase64,
+            frame.width,
+            frame.height,
+            targetLanguage,
+            mock: true
+        );
+    }
+
+    private async System.Threading.Tasks.Task<CapturedFrame> CaptureFrameForPipelineAsync()
+    {
+        if (frameCaptureService != null && useBackendPipeline)
+        {
+            debugPanel?.UpdateTrackingState("Capturing frame");
+            return await frameCaptureService.CaptureAsync();
+        }
+
+        return new CapturedFrame
+        {
+            frameId = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff"),
+            imageBase64 = "",
+            width = Screen.width,
+            height = Screen.height
+        };
     }
 
     private void OnClearPressed()

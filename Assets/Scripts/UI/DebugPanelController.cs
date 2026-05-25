@@ -1,4 +1,5 @@
 // DebugPanelController.cs
+using System.Text;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -42,6 +43,47 @@ public class DebugPanelController : MonoBehaviour
     public void UpdateTranslatedText(string text)
     {
         translatedTextField.text = $"Translated:\n{text}";
+    }
+
+    public void UpdatePipelineResponse(PipelineResponse response)
+    {
+        if (response == null)
+        {
+            UpdateOCRText("-");
+            UpdateTranslatedText("-");
+            return;
+        }
+
+        var ocrBuilder = new StringBuilder();
+        var translatedBuilder = new StringBuilder();
+
+        if (response.provider != null)
+        {
+            translatedBuilder.AppendLine($"Provider: OCR={response.provider.ocr}, Trans={response.provider.translation}");
+        }
+        translatedBuilder.AppendLine($"Frame: {response.frame_id}");
+        translatedBuilder.AppendLine($"Blocks: {response.blocks?.Count ?? 0}");
+
+        if (response.blocks != null)
+        {
+            foreach (PipelineBlock block in response.blocks)
+            {
+                ocrBuilder.AppendLine($"[{block.id}] {block.source_text}");
+                translatedBuilder.AppendLine($"[{block.id}] {block.translated_text}");
+            }
+        }
+
+        if (response.warnings != null && response.warnings.Length > 0)
+        {
+            translatedBuilder.AppendLine("Warnings:");
+            foreach (string warning in response.warnings)
+            {
+                translatedBuilder.AppendLine($"- {warning}");
+            }
+        }
+
+        UpdateOCRText(ocrBuilder.Length > 0 ? ocrBuilder.ToString() : "-");
+        UpdateTranslatedText(translatedBuilder.ToString());
     }
 
     public void UpdateTrackingState(string state)

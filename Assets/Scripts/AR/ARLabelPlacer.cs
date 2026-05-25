@@ -25,6 +25,11 @@ public class ARLabelPlacer : MonoBehaviour
     /// </summary>
     public void PlaceFixedLabel(string translatedText, Vector2 screenPos)
     {
+        TryPlaceFixedLabel(translatedText, screenPos);
+    }
+
+    public bool TryPlaceFixedLabel(string translatedText, Vector2 screenPos)
+    {
         if (raycastController.TryRaycast(screenPos, out Pose hitPose))
         {
             // Tạo anchor để text bám ổn định
@@ -41,7 +46,51 @@ public class ARLabelPlacer : MonoBehaviour
 
             ARLectureVisualPolish.StyleLabel(label);
             fixedLabels.Add(label);
+            return true;
         }
+
+        return false;
+    }
+
+    public int PlacePipelineLabels(PipelineResponse response)
+    {
+        if (response == null || response.blocks == null) return 0;
+
+        int placed = 0;
+        foreach (PipelineBlock block in response.blocks)
+        {
+            if (block == null || block.bbox == null || block.bbox.Length < 4) continue;
+
+            string text = string.IsNullOrWhiteSpace(block.translated_text)
+                ? block.source_text
+                : block.translated_text;
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            Vector2 screenPoint = BBoxCenterToScreenPoint(block.bbox, response.image_width, response.image_height);
+            if (TryPlaceFixedLabel(text, screenPoint))
+            {
+                placed++;
+            }
+        }
+
+        return placed;
+    }
+
+    private Vector2 BBoxCenterToScreenPoint(float[] bbox, int imageWidth, int imageHeight)
+    {
+        float centerX = (bbox[0] + bbox[2]) * 0.5f;
+        float centerY = (bbox[1] + bbox[3]) * 0.5f;
+
+        float screenX = imageWidth > 0
+            ? centerX / imageWidth * Screen.width
+            : Screen.width * 0.5f;
+
+        // Backend trả bbox theo gốc top-left; Unity screen point dùng gốc bottom-left.
+        float screenY = imageHeight > 0
+            ? Screen.height - (centerY / imageHeight * Screen.height)
+            : Screen.height * 0.5f;
+
+        return new Vector2(screenX, screenY);
     }
 
     /// <summary>
