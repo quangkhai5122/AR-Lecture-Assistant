@@ -15,6 +15,8 @@ public class FramePipelineRequest
     public bool mock = false;
     public int image_width;
     public int image_height;
+    public string ocr_provider;
+    public string translation_provider;
 }
 
 [Serializable]

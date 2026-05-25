@@ -11,5 +11,5 @@ pytest==8.3.2
 # paddleocr==3.5.0
 
 # Optional OCR provider used by OCR_PROVIDER=tesseract.
-# Requires the Tesseract binary to be installed separately on Windows.
-# pytesseract==0.3.13
+# Requires the Tesseract binary to be installed separately.
+pytesseract==0.3.13

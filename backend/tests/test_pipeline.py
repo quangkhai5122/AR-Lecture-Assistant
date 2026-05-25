@@ -4,6 +4,7 @@ import base64
 import builtins
 import importlib.util
 import io
+import shutil
 from pathlib import Path
 
 import pytest
@@ -102,6 +103,80 @@ def test_ocr_endpoint_accepts_mock_without_image():
     assert data["provider"] == {"ocr": "mock"}
     assert data["mock_used"] is True
     assert data["blocks"]
+
+
+def test_ocr_endpoint_accepts_empty_provider_as_default():
+    client = app.test_client()
+    response = client.post("/ocr", json={
+        "mock": True,
+        "image_width": 640,
+        "image_height": 360,
+        "ocr_provider": "",
+    })
+    assert response.status_code == 200
+    assert response.get_json()["provider"] == {"ocr": "mock"}
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract binary is not installed")
+def test_tesseract_ocr_on_sample_slide(monkeypatch):
+    pytest.importorskip("pytesseract")
+
+    image_path = Path(__file__).resolve().parents[2] / "samples" / "slides" / "slide_01.png"
+    monkeypatch.setenv("OCR_PROVIDER", "tesseract")
+    monkeypatch.setenv("OCR_MIN_CONFIDENCE", "0.2")
+
+    client = app.test_client()
+    with Image.open(image_path) as image:
+        width, height = image.size
+
+    response = client.post("/ocr", json={
+        "mock": False,
+        "image_base64": base64.b64encode(image_path.read_bytes()).decode("utf-8"),
+        "image_width": width,
+        "image_height": height,
+        "ocr_provider": "tesseract",
+    })
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["provider"] == {"ocr": "tesseract"}
+    assert data["mock_used"] is False
+    assert data["blocks"]
+    assert all(block["bbox"][2] > block["bbox"][0] for block in data["blocks"])
+    assert all(block["bbox"][3] > block["bbox"][1] for block in data["blocks"])
+    assert all(0 <= block["confidence"] <= 1 for block in data["blocks"])
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract binary is not installed")
+def test_pipeline_uses_real_tesseract_ocr_with_mock_translation(monkeypatch):
+    pytest.importorskip("pytesseract")
+
+    image_path = Path(__file__).resolve().parents[2] / "samples" / "slides" / "slide_01.png"
+    monkeypatch.setenv("OCR_PROVIDER", "tesseract")
+    monkeypatch.setenv("OCR_MIN_CONFIDENCE", "0.2")
+
+    client = app.test_client()
+    with Image.open(image_path) as image:
+        width, height = image.size
+
+    response = client.post("/pipeline/frame", json={
+        "frame_id": "slide_01_real_ocr",
+        "mock": False,
+        "target_language": "vi",
+        "image_base64": base64.b64encode(image_path.read_bytes()).decode("utf-8"),
+        "image_width": width,
+        "image_height": height,
+        "ocr_provider": "tesseract",
+        "translation_provider": "mock",
+    })
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["provider"] == {"ocr": "tesseract", "translation": "mock"}
+    assert data["blocks"]
+    assert data["blocks"][0]["source_text"]
+    assert data["blocks"][0]["translated_text"]
+    assert all("bbox" in block and len(block["bbox"]) == 4 for block in data["blocks"])
 
 
 def test_translate_endpoint_mock_keeps_ids_and_formula_type():

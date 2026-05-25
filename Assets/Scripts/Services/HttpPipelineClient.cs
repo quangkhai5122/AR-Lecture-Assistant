@@ -39,10 +39,21 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
         int imageWidth,
         int imageHeight,
         string targetLanguage,
-        bool mock
+        bool mock,
+        string ocrProvider = "",
+        string translationProvider = ""
     )
     {
-        var payload = BuildFrameRequest(frameId, imageBase64, imageWidth, imageHeight, targetLanguage, mock);
+        var payload = BuildFrameRequest(
+            frameId,
+            imageBase64,
+            imageWidth,
+            imageHeight,
+            targetLanguage,
+            mock,
+            ocrProvider,
+            translationProvider
+        );
         return await SendPipelineRequestAsync(payload, ResolvePipelineFrameUrl());
     }
 
@@ -52,10 +63,21 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
         int imageWidth,
         int imageHeight,
         string targetLanguage,
-        bool mock
+        bool mock,
+        string ocrProvider = "",
+        string translationProvider = ""
     )
     {
-        var payload = BuildFrameRequest(frameId, imageBase64, imageWidth, imageHeight, targetLanguage, mock);
+        var payload = BuildFrameRequest(
+            frameId,
+            imageBase64,
+            imageWidth,
+            imageHeight,
+            targetLanguage,
+            mock,
+            ocrProvider,
+            translationProvider
+        );
         return await SendPipelineRequestAsync(payload, BuildUrl(pipelineAliasPath));
     }
 
@@ -164,7 +186,9 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
         int imageWidth,
         int imageHeight,
         string targetLanguage,
-        bool mock
+        bool mock,
+        string ocrProvider = "",
+        string translationProvider = ""
     )
     {
         return new FramePipelineRequest
@@ -175,7 +199,9 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
             mode = "slide_translation",
             mock = mock,
             image_width = imageWidth,
-            image_height = imageHeight
+            image_height = imageHeight,
+            ocr_provider = ocrProvider,
+            translation_provider = translationProvider
         };
     }
 

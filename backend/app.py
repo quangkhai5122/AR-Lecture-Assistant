@@ -62,7 +62,7 @@ def health():
         "service": "ar-lecture-translator-backend",
         "mode": "mvp",
         "provider": {
-            "ocr": os.getenv("OCR_PROVIDER", "mock"),
+            "ocr": os.getenv("OCR_PROVIDER", "tesseract"),
             "translation": os.getenv("TRANSLATION_PROVIDER", "mock"),
         },
     })
@@ -166,7 +166,7 @@ def _validate_translate_payload(payload: dict[str, Any]) -> None:
     _require_string(payload, "target_language")
     if "mock" in payload and not isinstance(payload["mock"], bool):
         raise PipelineError("Field 'mock' must be a boolean.")
-    if "translation_provider" in payload:
+    if payload.get("translation_provider"):
         _require_string(payload, "translation_provider")
     texts = payload.get("texts")
     if not isinstance(texts, list):
@@ -190,9 +190,9 @@ def _validate_common_payload(payload: dict[str, Any]) -> None:
             or payload[key] <= 0
         ):
             raise PipelineError(f"Field '{key}' must be a positive integer.")
-    if "ocr_provider" in payload:
+    if payload.get("ocr_provider"):
         _require_string(payload, "ocr_provider")
-    if "translation_provider" in payload:
+    if payload.get("translation_provider"):
         _require_string(payload, "translation_provider")
 
 

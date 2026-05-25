@@ -28,8 +28,8 @@ public class ButtonController : MonoBehaviour
     [SerializeField] private bool fallbackToUnityMockOnBackendError = true;
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private BackendPipelineMode backendPipelineMode = BackendPipelineMode.PipelineFrame;
-    [SerializeField] private string ocrProvider = "";
-    [SerializeField] private string translationProvider = "";
+    [SerializeField] private string ocrProvider = "tesseract";
+    [SerializeField] private string translationProvider = "mock";
     [SerializeField] private FrameCaptureService frameCaptureService;
     [SerializeField] private HttpPipelineClient httpPipelineClient;
 
@@ -181,7 +181,9 @@ public class ButtonController : MonoBehaviour
                     frame.width,
                     frame.height,
                     targetLanguage,
-                    backendMockMode
+                    backendMockMode,
+                    ocrProvider,
+                    translationProvider
                 );
 
             case BackendPipelineMode.SplitOcrTranslate:
@@ -214,7 +216,9 @@ public class ButtonController : MonoBehaviour
                     frame.width,
                     frame.height,
                     targetLanguage,
-                    backendMockMode
+                    backendMockMode,
+                    ocrProvider,
+                    translationProvider
                 );
         }
     }

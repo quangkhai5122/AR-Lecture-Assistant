@@ -8,6 +8,8 @@ public interface IPipelineClient
         int imageWidth,
         int imageHeight,
         string targetLanguage,
-        bool mock
+        bool mock,
+        string ocrProvider = "",
+        string translationProvider = ""
     );
 }

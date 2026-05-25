@@ -21,9 +21,9 @@ Cần cải thiện bằng:
 - Map bbox corners sang world coordinates.
 - Render label theo kích thước thật trên plane.
 
-## 3. OCR mặc định là mock
+## 3. OCR thật đã bật bằng Tesseract, nhưng chưa tối ưu real-time
 
-Backend có optional Tesseract nhưng không bật mặc định. Tesseract không phải lựa chọn tốt nhất cho real-time AR.
+Backend real mode mặc định dùng `OCR_PROVIDER=tesseract`. Tesseract đã chạy được với ảnh sample và trả `bbox`/`confidence`, nhưng không phải lựa chọn tốt nhất cho real-time AR hoặc slide mờ/nghiêng.
 
 Cần đánh giá:
 

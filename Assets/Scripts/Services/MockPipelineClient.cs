@@ -10,7 +10,9 @@ public class MockPipelineClient : IPipelineClient
         int imageWidth,
         int imageHeight,
         string targetLanguage,
-        bool mock
+        bool mock,
+        string ocrProvider = "",
+        string translationProvider = ""
     )
     {
         int w = imageWidth > 0 ? imageWidth : Screen.width;

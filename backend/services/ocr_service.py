@@ -86,7 +86,7 @@ class OCRService:
         if force_mock:
             return "mock"
 
-        selected = (provider or os.getenv("OCR_PROVIDER") or "paddleocr").strip().lower()
+        selected = (provider or os.getenv("OCR_PROVIDER") or "tesseract").strip().lower()
         if selected not in self.SUPPORTED_PROVIDERS:
             raise PipelineError(
                 f"Unsupported OCR provider '{selected}'. Expected one of: {sorted(self.SUPPORTED_PROVIDERS)}."
