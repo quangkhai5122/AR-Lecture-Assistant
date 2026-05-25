@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OCRRequest",
+  "type": "object",
+  "properties": {
+    "image_base64": {
+      "type": "string",
+      "default": "",
+      "description": "Base64 image data. Required when mock=false; optional in mock mode."
+    },
+    "mock": { "type": "boolean", "default": true },
+    "image_width": { "type": "integer", "minimum": 1 },
+    "image_height": { "type": "integer", "minimum": 1 },
+    "ocr_provider": {
+      "type": "string",
+      "enum": ["mock", "paddleocr", "tesseract"],
+      "description": "Optional per-request override. If omitted, backend uses OCR_PROVIDER env var in real mode."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "mock": { "const": false } },
+        "required": ["mock"]
+      },
+      "then": {
+        "required": ["image_base64"],
+        "properties": {
+          "image_base64": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ]
+}

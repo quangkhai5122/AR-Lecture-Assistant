@@ -15,6 +15,8 @@ namespace ARLectureTranslator.Models
         public string target_language = "vi";
         public string mode = "slide_translation";
         public bool mock = false;
+        public int image_width;
+        public int image_height;
     }
 
     /// <summary>
@@ -28,6 +30,10 @@ namespace ARLectureTranslator.Models
         public int image_width;
         public int image_height;
         public List<PipelineBlock> blocks = new List<PipelineBlock>();
+        public PipelineProvider provider;
+        public bool mock_used;
+        public string[] warnings;
+        public PipelineLatency latency_ms;
     }
 
     [Serializable]
@@ -53,5 +59,20 @@ namespace ARLectureTranslator.Models
     {
         public int font_size = 36;
         public float background_alpha = 0.65f;
+    }
+
+    [Serializable]
+    public class PipelineProvider
+    {
+        public string ocr;
+        public string translation;
+    }
+
+    [Serializable]
+    public class PipelineLatency
+    {
+        public float ocr;
+        public float translation;
+        public float total;
     }
 }

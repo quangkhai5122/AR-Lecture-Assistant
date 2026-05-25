@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import os
+from typing import Any
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from werkzeug.exceptions import BadRequest
 
+from services.errors import PipelineError
 from services.pipeline_service import PipelineService
 
 app = Flask(__name__)
@@ -12,64 +16,190 @@ CORS(app)
 pipeline_service = PipelineService()
 
 
+@app.errorhandler(PipelineError)
+def handle_pipeline_error(exc: PipelineError):
+    return jsonify({
+        "error": {
+            "code": exc.code,
+            "message": exc.message,
+        }
+    }), exc.status_code
+
+
+@app.errorhandler(BadRequest)
+def handle_bad_request(exc: BadRequest):
+    return jsonify({
+        "error": {
+            "code": "bad_json",
+            "message": "Request body must be valid JSON.",
+        }
+    }), 400
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(exc: Exception):
+    app.logger.exception("Unhandled backend error")
+    return jsonify({
+        "error": {
+            "code": "internal_error",
+            "message": str(exc),
+        }
+    }), 500
+
+
 @app.get("/health")
 def health():
     return jsonify({
         "status": "ok",
         "service": "ar-lecture-translator-backend",
-        "mode": "mvp"
+        "mode": "mvp",
+        "provider": {
+            "ocr": os.getenv("OCR_PROVIDER", "mock"),
+            "translation": os.getenv("TRANSLATION_PROVIDER", "mock"),
+        },
     })
 
 
+@app.post("/pipeline")
 @app.post("/pipeline/frame")
 def pipeline_frame():
-    """Unity gọi endpoint này để OCR + dịch một frame.
-
-    Request JSON:
-    {
-      "frame_id": "...",
-      "image_base64": "...",
-      "target_language": "vi",
-      "mode": "slide_translation",
-      "mock": true
-    }
-    """
-    payload = request.get_json(silent=True) or {}
+    payload = _json_payload()
+    _validate_frame_payload(payload)
     result = pipeline_service.process_frame(payload)
     return jsonify(result)
 
 
 @app.post("/ocr")
 def ocr_only():
-    """Endpoint phụ cho OCR test độc lập."""
-    payload = request.get_json(silent=True) or {}
-    blocks = pipeline_service.ocr_service.recognize(
+    payload = _json_payload()
+    _validate_ocr_payload(payload)
+    force_mock = bool(payload.get("mock", True))
+    result = pipeline_service.ocr_service.recognize(
         image_base64=payload.get("image_base64", ""),
         image_width=payload.get("image_width"),
         image_height=payload.get("image_height"),
-        force_mock=payload.get("mock", True),
+        force_mock=force_mock,
+        provider=payload.get("ocr_provider"),
     )
-    return jsonify({"blocks": blocks})
+    return jsonify({
+        "image_width": result.image_width,
+        "image_height": result.image_height,
+        "blocks": result.blocks,
+        "provider": {"ocr": result.provider},
+        "mock_used": result.mock_used,
+        "warnings": result.warnings,
+    })
 
 
 @app.post("/translate")
 def translate_only():
-    """Endpoint phụ cho translation test độc lập."""
-    payload = request.get_json(silent=True) or {}
+    payload = _json_payload()
+    _validate_translate_payload(payload)
+
     texts = payload.get("texts", [])
+    force_mock = bool(payload.get("mock", True))
     target_language = payload.get("target_language", "vi")
-    translations = []
-    for item in texts:
-        text = item.get("text", "") if isinstance(item, dict) else str(item)
-        block_id = item.get("id", "") if isinstance(item, dict) else ""
-        translated, block_type = pipeline_service.translate_preserving_formula(text, target_language)
-        translations.append({
-            "id": block_id,
-            "source_text": text,
-            "translated_text": translated,
-            "type": block_type,
-        })
-    return jsonify({"translations": translations})
+    source_items = [
+        item if isinstance(item, dict) else {"id": "", "text": str(item)}
+        for item in texts
+    ]
+
+    translated_blocks, result = pipeline_service.translate_blocks_preserving_formula(
+        [
+            {
+                "id": item.get("id", ""),
+                "text": item.get("text", ""),
+                "bbox": [0, 0, 0, 0],
+                "confidence": 1.0,
+            }
+            for item in source_items
+        ],
+        target_language=target_language,
+        force_mock=force_mock,
+        provider=payload.get("translation_provider"),
+    )
+
+    return jsonify({
+        "translations": [
+            {
+                "id": block["id"],
+                "source_text": block["source_text"],
+                "translated_text": block["translated_text"],
+                "type": block["type"],
+            }
+            for block in translated_blocks
+        ],
+        "provider": {"translation": result.provider},
+        "mock_used": result.mock_used,
+        "warnings": result.warnings,
+    })
+
+
+def _json_payload() -> dict[str, Any]:
+    payload = request.get_json(silent=False)
+    if not isinstance(payload, dict):
+        raise PipelineError("Request body must be a JSON object.")
+    return payload
+
+
+def _validate_frame_payload(payload: dict[str, Any]) -> None:
+    _require_string(payload, "frame_id")
+    _require_string(payload, "target_language")
+    _validate_common_payload(payload)
+    _validate_image_payload(payload, required=not bool(payload.get("mock", True)))
+
+
+def _validate_ocr_payload(payload: dict[str, Any]) -> None:
+    _validate_common_payload(payload)
+    _validate_image_payload(payload, required=not bool(payload.get("mock", True)))
+
+
+def _validate_translate_payload(payload: dict[str, Any]) -> None:
+    _require_string(payload, "target_language")
+    if "mock" in payload and not isinstance(payload["mock"], bool):
+        raise PipelineError("Field 'mock' must be a boolean.")
+    if "translation_provider" in payload:
+        _require_string(payload, "translation_provider")
+    texts = payload.get("texts")
+    if not isinstance(texts, list):
+        raise PipelineError("Field 'texts' must be a list.")
+    for index, item in enumerate(texts):
+        if isinstance(item, str):
+            continue
+        if not isinstance(item, dict):
+            raise PipelineError(f"Field 'texts[{index}]' must be a string or object.")
+        if not isinstance(item.get("text"), str):
+            raise PipelineError(f"Field 'texts[{index}].text' must be a string.")
+
+
+def _validate_common_payload(payload: dict[str, Any]) -> None:
+    if "mock" in payload and not isinstance(payload["mock"], bool):
+        raise PipelineError("Field 'mock' must be a boolean.")
+    for key in ("image_width", "image_height"):
+        if key in payload and (
+            not isinstance(payload[key], int)
+            or isinstance(payload[key], bool)
+            or payload[key] <= 0
+        ):
+            raise PipelineError(f"Field '{key}' must be a positive integer.")
+    if "ocr_provider" in payload:
+        _require_string(payload, "ocr_provider")
+    if "translation_provider" in payload:
+        _require_string(payload, "translation_provider")
+
+
+def _require_string(payload: dict[str, Any], key: str) -> None:
+    if not isinstance(payload.get(key), str) or not payload[key].strip():
+        raise PipelineError(f"Field '{key}' is required and must be a non-empty string.")
+
+
+def _validate_image_payload(payload: dict[str, Any], required: bool) -> None:
+    if required:
+        _require_string(payload, "image_base64")
+        return
+
+    if "image_base64" in payload and not isinstance(payload["image_base64"], str):
+        raise PipelineError("Field 'image_base64' must be a string.")
 
 
 if __name__ == "__main__":

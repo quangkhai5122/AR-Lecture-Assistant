@@ -74,4 +74,14 @@ class FormulaService:
         restored = translated_text
         for token, original in mapping.items():
             restored = restored.replace(token, original)
+            match = re.search(r"FORMULA_(\d+)", token)
+            if match:
+                index = re.escape(match.group(1))
+                # Some MT engines mangle placeholders, for example
+                # [FORMULA_0] -> [ORMULA 0]. Restore common variants.
+                placeholder_pattern = re.compile(
+                    rf"\[\s*F?ORMULA[\s_\-]*{index}\s*\]",
+                    flags=re.IGNORECASE,
+                )
+                restored = placeholder_pattern.sub(original, restored)
         return restored
