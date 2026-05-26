@@ -46,7 +46,13 @@ public class ARLectureVisualPolish : MonoBehaviour
         foreach (TextMeshProUGUI text in labelRoot.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
             text.color = TextColor;
-            text.fontSize = Mathf.Max(text.fontSize, 30f);
+            text.fontSize = Mathf.Clamp(text.fontSize, 18f, 32f);
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 16f;
+            text.fontSizeMax = 32f;
+            text.maxVisibleLines = 4;
+            text.enableWordWrapping = true;
+            text.overflowMode = TextOverflowModes.Ellipsis;
             text.fontStyle = FontStyles.Bold;
             text.alignment = TextAlignmentOptions.Center;
         }
@@ -67,8 +73,15 @@ public class ARLectureVisualPolish : MonoBehaviour
         foreach (TextMeshProUGUI text in subtitleRoot.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
             text.color = TextColor;
-            text.fontSize = Mathf.Max(text.fontSize, 28f);
+            text.fontSize = Mathf.Clamp(text.fontSize, 18f, 30f);
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 18f;
+            text.fontSizeMax = 30f;
+            text.maxVisibleLines = 3;
+            text.enableWordWrapping = true;
+            text.overflowMode = TextOverflowModes.Ellipsis;
             text.fontStyle = FontStyles.Normal;
+            text.alignment = TextAlignmentOptions.Center;
         }
     }
 

@@ -110,12 +110,27 @@ public class ButtonController : MonoBehaviour
             PipelineResponse response = await RunPipelineAsync();
             debugPanel?.UpdatePipelineResponse(response);
 
+            int readableBlocks = labelPlacer != null ? labelPlacer.CountReadableBlocks(response) : CountReadableBlocks(response);
+            if (readableBlocks == 0)
+            {
+                string message = "Không đọc được chữ. Hãy đưa camera gần slide/bảng hơn, tăng ánh sáng hoặc thử chụp lại.";
+                stateManager.SetState(AppState.Error);
+                debugPanel?.UpdateTrackingState("OCR empty");
+                debugPanel?.UpdateTranslatedText(message);
+                labelPlacer?.ShowSubtitle(message);
+                Debug.LogWarning("[ButtonController] OCR returned no readable text blocks.");
+                return;
+            }
+
             int placed = labelPlacer != null ? labelPlacer.PlacePipelineLabels(response) : 0;
             if (placed == 0)
             {
+                string message = "Đã đọc được chữ nhưng chưa đặt được label AR. Hãy Scan lại mặt phẳng rồi bấm Translate.";
                 stateManager.SetState(AppState.Error);
-                debugPanel?.UpdateTrackingState("Pipeline OK, no AR hit");
-                Debug.LogWarning("[ButtonController] Pipeline returned blocks but no labels were placed. Scan plane again.");
+                debugPanel?.UpdateTrackingState("No AR hit");
+                debugPanel?.UpdateTranslatedText(message);
+                labelPlacer?.ShowSubtitle(message);
+                Debug.LogWarning("[ButtonController] Pipeline returned readable blocks but no labels were placed. Scan plane again.");
                 return;
             }
 
@@ -239,6 +254,25 @@ public class ButtonController : MonoBehaviour
         }
 
         return texts;
+    }
+
+    private int CountReadableBlocks(PipelineResponse response)
+    {
+        if (response == null || response.blocks == null) return 0;
+
+        int count = 0;
+        foreach (PipelineBlock block in response.blocks)
+        {
+            if (block == null) continue;
+
+            string text = string.IsNullOrWhiteSpace(block.translated_text)
+                ? block.source_text
+                : block.translated_text;
+
+            if (!string.IsNullOrWhiteSpace(text)) count++;
+        }
+
+        return count;
     }
 
     private async System.Threading.Tasks.Task CheckBackendHealthAsync()
