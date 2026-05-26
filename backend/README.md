@@ -28,7 +28,36 @@ python scripts/post_sample_frame.py \
   --image samples/slides/slide_01.png \
   --real \
   --ocr-provider tesseract \
-  --translation-provider mock
+  --translation-provider google
+```
+
+## Chạy Tesseract OCR + Google Translate
+
+Backend tự đọc `backend/.env` khi khởi động. File này bị git ignore, dùng để giữ API key local:
+
+```bash
+cp backend/.env.example backend/.env
+# sửa GOOGLE_TRANSLATE_API_KEY trong backend/.env
+python backend/app.py
+```
+
+Các biến tối thiểu:
+
+```bash
+OCR_PROVIDER=tesseract
+TRANSLATION_PROVIDER=google
+GOOGLE_TRANSLATE_API_KEY=<your-google-translate-api-key>
+GOOGLE_TRANSLATE_SOURCE_LANGUAGE=en
+```
+
+Test end-to-end bằng ảnh sample:
+
+```bash
+python scripts/post_sample_frame.py \
+  --image samples/slides/slide_01.png \
+  --real \
+  --ocr-provider tesseract \
+  --translation-provider google
 ```
 
 ## Cài PaddleOCR và LibreTranslate

@@ -29,7 +29,7 @@ public class ButtonController : MonoBehaviour
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private BackendPipelineMode backendPipelineMode = BackendPipelineMode.PipelineFrame;
     [SerializeField] private string ocrProvider = "tesseract";
-    [SerializeField] private string translationProvider = "mock";
+    [SerializeField] private string translationProvider = "google";
     [SerializeField] private FrameCaptureService frameCaptureService;
     [SerializeField] private HttpPipelineClient httpPipelineClient;
 
