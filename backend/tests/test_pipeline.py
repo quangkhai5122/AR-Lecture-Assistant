@@ -38,6 +38,8 @@ def test_pipeline_mock_returns_blocks():
     assert result["mock_used"] is True
     assert result["provider"]["ocr"] == "mock"
     assert "translated_text" in result["blocks"][0]
+    assert result["document_surface"]["method"] == "ocr_bbox_union"
+    assert len(result["document_surface"]["corners"]) == 8
 
 
 def test_decoded_image_dimensions_are_used_even_if_hints_differ():
@@ -176,7 +178,27 @@ def test_pipeline_uses_real_tesseract_ocr_with_mock_translation(monkeypatch):
     assert data["blocks"]
     assert data["blocks"][0]["source_text"]
     assert data["blocks"][0]["translated_text"]
+    assert data["document_surface"]["corners"]
     assert all("bbox" in block and len(block["bbox"]) == 4 for block in data["blocks"])
+
+
+def test_document_surface_estimation_from_ocr_boxes():
+    service = PipelineService()
+    surface = service.estimate_document_surface(
+        [
+            {"bbox": [100, 120, 500, 160]},
+            {"bbox": [140, 300, 620, 350]},
+        ],
+        image_width=800,
+        image_height=600,
+    )
+
+    assert surface is not None
+    assert surface["method"] == "ocr_bbox_union"
+    assert surface["corners"][0] < 100
+    assert surface["corners"][1] < 120
+    assert surface["corners"][4] > 620
+    assert surface["corners"][5] > 350
 
 
 def test_translate_endpoint_mock_keeps_ids_and_formula_type():

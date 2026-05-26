@@ -59,6 +59,11 @@ class PipelineService:
             "frame_id": frame_id,
             "image_width": ocr_result.image_width,
             "image_height": ocr_result.image_height,
+            "document_surface": self.estimate_document_surface(
+                ocr_result.blocks,
+                ocr_result.image_width,
+                ocr_result.image_height,
+            ),
             "blocks": translated_blocks,
             "provider": {
                 "ocr": ocr_result.provider,
@@ -132,6 +137,70 @@ class PipelineService:
 
         return translated_blocks, translation_result
 
+    def estimate_document_surface(
+        self,
+        blocks: list[dict[str, Any]],
+        image_width: int,
+        image_height: int,
+    ) -> dict[str, Any] | None:
+        """Estimate slide/board corners from OCR boxes.
+
+        The mobile client can project these corners onto the AR plane and place
+        labels by surface coordinates instead of raycasting every text center.
+        """
+
+        valid_boxes: list[list[float]] = []
+        for block in blocks:
+            bbox = block.get("bbox")
+            if not isinstance(bbox, list) or len(bbox) < 4:
+                continue
+
+            try:
+                x1, y1, x2, y2 = [float(value) for value in bbox[:4]]
+            except (TypeError, ValueError):
+                continue
+
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            valid_boxes.append([x1, y1, x2, y2])
+
+        if not valid_boxes or image_width <= 0 or image_height <= 0:
+            return None
+
+        x1 = min(box[0] for box in valid_boxes)
+        y1 = min(box[1] for box in valid_boxes)
+        x2 = max(box[2] for box in valid_boxes)
+        y2 = max(box[3] for box in valid_boxes)
+
+        content_width = max(1.0, x2 - x1)
+        content_height = max(1.0, y2 - y1)
+        pad_x = max(image_width * 0.04, content_width * 0.10)
+        pad_y = max(image_height * 0.05, content_height * 0.35)
+
+        x1 = self._clamp_float(x1 - pad_x, 0.0, float(image_width))
+        y1 = self._clamp_float(y1 - pad_y, 0.0, float(image_height))
+        x2 = self._clamp_float(x2 + pad_x, 0.0, float(image_width))
+        y2 = self._clamp_float(y2 + pad_y, 0.0, float(image_height))
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        coverage = ((x2 - x1) * (y2 - y1)) / max(1.0, float(image_width * image_height))
+        confidence = max(0.25, min(0.85, 0.35 + coverage))
+
+        return {
+            "corners": [
+                round(x1, 2), round(y1, 2),
+                round(x2, 2), round(y1, 2),
+                round(x2, 2), round(y2, 2),
+                round(x1, 2), round(y2, 2),
+            ],
+            "confidence": round(confidence, 3),
+            "method": "ocr_bbox_union",
+            "source": "ocr_blocks",
+        }
+
     def translate_preserving_formula(
         self,
         text: str,
@@ -150,3 +219,6 @@ class PipelineService:
 
     def _elapsed_ms(self, start: float) -> float:
         return round((time.perf_counter() - start) * 1000, 2)
+
+    def _clamp_float(self, value: float, lower: float, upper: float) -> float:
+        return max(lower, min(upper, value))

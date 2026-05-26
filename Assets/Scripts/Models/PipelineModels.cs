@@ -60,11 +60,21 @@ public class PipelineResponse
     public string frame_id;
     public int image_width;
     public int image_height;
+    public DocumentSurface document_surface;
     public List<PipelineBlock> blocks = new List<PipelineBlock>();
     public PipelineProvider provider;
     public bool mock_used;
     public string[] warnings;
     public PipelineLatency latency_ms;
+}
+
+[Serializable]
+public class DocumentSurface
+{
+    public float[] corners;
+    public float confidence;
+    public string method;
+    public string source;
 }
 
 [Serializable]
