@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections;
 using System.Threading.Tasks;
 using Unity.Collections;
 using UnityEngine;
@@ -41,22 +42,51 @@ public class FrameCaptureService : MonoBehaviour
     [Tooltip("Một số thiết bị cần lật ảnh CPU camera theo trục Y để khớp texture Unity.")]
     public bool mirrorCameraImageY = true;
 
-    public async Task<CapturedFrame> CaptureAsync()
+    public Task<CapturedFrame> CaptureAsync()
     {
-        await Task.Yield();
+        var tcs = new TaskCompletionSource<CapturedFrame>();
+        StartCoroutine(CaptureCoroutine(tcs));
+        return tcs.Task;
+    }
 
+    private IEnumerator CaptureCoroutine(TaskCompletionSource<CapturedFrame> tcs)
+    {
+        // Bước 1: Thử AR Camera Raw (không cần WaitForEndOfFrame)
         if (captureSource != FrameCaptureSource.Screenshot &&
             TryCaptureARCameraRaw(out CapturedFrame cameraFrame))
         {
-            return cameraFrame;
+            tcs.TrySetResult(cameraFrame);
+            yield break;
         }
 
         if (captureSource == FrameCaptureSource.ARCameraRaw)
         {
-            throw new InvalidOperationException("Cannot acquire AR camera CPU image.");
+            tcs.TrySetException(new InvalidOperationException("Cannot acquire AR camera CPU image."));
+            yield break;
         }
 
-        return CaptureScreenshotFrame();
+        // Bước 2: Screenshot — BẮT BUỘC phải đợi WaitForEndOfFrame trên Android
+        yield return new WaitForEndOfFrame();
+
+        try
+        {
+            CapturedFrame frame = CaptureScreenshotFrame();
+            tcs.TrySetResult(frame);
+        }
+        catch (Exception)
+        {
+            // Bước 3: Fallback — đọc pixels từ Camera.main
+            try
+            {
+                CapturedFrame frame = CaptureCameraReadPixels();
+                tcs.TrySetResult(frame);
+            }
+            catch (Exception ex2)
+            {
+                tcs.TrySetException(new InvalidOperationException(
+                    $"All capture methods failed: {ex2.Message}"));
+            }
+        }
     }
 
     private bool TryCaptureARCameraRaw(out CapturedFrame frame)
@@ -122,7 +152,7 @@ public class FrameCaptureService : MonoBehaviour
         Texture2D capturedTexture = ScreenCapture.CaptureScreenshotAsTexture();
         if (capturedTexture == null)
         {
-            throw new InvalidOperationException("Cannot capture screen texture.");
+            throw new InvalidOperationException("Screenshot returned null.");
         }
 
         Texture2D uploadTexture = ResizeIfNeeded(capturedTexture);
@@ -143,8 +173,50 @@ public class FrameCaptureService : MonoBehaviour
             {
                 Destroy(uploadTexture);
             }
-
             Destroy(capturedTexture);
+        }
+    }
+
+    /// <summary>
+    /// Fallback: đọc pixels trực tiếp từ Camera.main RenderTexture
+    /// </summary>
+    private CapturedFrame CaptureCameraReadPixels()
+    {
+        Camera cam = Camera.main;
+        if (cam == null)
+            throw new InvalidOperationException("Camera.main is null.");
+
+        int w = Screen.width;
+        int h = Screen.height;
+        Vector2Int size = ResolveOutputDimensions(w, h);
+
+        RenderTexture rt = new RenderTexture(size.x, size.y, 24);
+        RenderTexture prev = cam.targetTexture;
+        cam.targetTexture = rt;
+        cam.Render();
+        cam.targetTexture = prev;
+
+        RenderTexture.active = rt;
+        Texture2D tex = new Texture2D(size.x, size.y, TextureFormat.RGB24, false);
+        tex.ReadPixels(new Rect(0, 0, size.x, size.y), 0, 0);
+        tex.Apply();
+        RenderTexture.active = null;
+        Destroy(rt);
+
+        try
+        {
+            byte[] jpg = tex.EncodeToJPG(jpegQuality);
+            return new CapturedFrame
+            {
+                frameId = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff"),
+                imageBase64 = Convert.ToBase64String(jpg),
+                width = size.x,
+                height = size.y
+            };
+        }
+        finally
+        {
+            Destroy(tex);
         }
     }
 

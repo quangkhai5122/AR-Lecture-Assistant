@@ -1,4 +1,4 @@
-﻿// ButtonController.cs
+// ButtonController.cs
 using System;
 using System.Collections.Generic;
 using TMPro;
@@ -105,54 +105,117 @@ public class ButtonController : MonoBehaviour
         stateManager.SetState(AppState.Translating);
         UpdateButtonStates();
 
+        string step = "init";
         try
         {
+            step = "1-capture";
+            stateManager.SetError($"[DEBUG] {step}...");
             PipelineResponse response = await RunPipelineAsync();
-            debugPanel?.UpdatePipelineResponse(response);
 
+            step = "2-count";
             int readableBlocks = labelPlacer != null ? labelPlacer.CountReadableBlocks(response) : CountReadableBlocks(response);
             if (readableBlocks == 0)
             {
-                string message = "Không đọc được chữ. Hãy đưa camera gần slide/bảng hơn, tăng ánh sáng hoặc thử chụp lại.";
-                stateManager.SetState(AppState.Error);
-                debugPanel?.UpdateTrackingState("OCR empty");
-                debugPanel?.UpdateTranslatedText(message);
-                labelPlacer?.ShowSubtitle(message);
-                Debug.LogWarning("[ButtonController] OCR returned no readable text blocks.");
+                stateManager.SetError("OCR không đọc được chữ. Đưa camera gần slide hơn.");
                 return;
             }
 
+            step = "3-place";
             int placed = labelPlacer != null ? labelPlacer.PlacePipelineLabels(response) : 0;
             if (placed == 0)
             {
-                string message = "Đã đọc được chữ nhưng chưa đặt được label AR. Hãy Scan lại mặt phẳng rồi bấm Translate.";
-                stateManager.SetState(AppState.Error);
-                debugPanel?.UpdateTrackingState("No AR hit");
-                debugPanel?.UpdateTranslatedText(message);
-                labelPlacer?.ShowSubtitle(message);
-                Debug.LogWarning("[ButtonController] Pipeline returned readable blocks but no labels were placed. Scan plane again.");
+                stateManager.SetError($"Đọc được {readableBlocks} block nhưng raycast miss. Scan lại plane.");
                 return;
             }
 
+            step = "4-subtitle";
             if (response.blocks != null && response.blocks.Count > 0)
             {
                 string subtitle = response.blocks[0].translated_text;
                 if (!string.IsNullOrWhiteSpace(subtitle))
                 {
-                    labelPlacer.ShowSubtitle(subtitle);
+                    labelPlacer?.ShowSubtitle(subtitle);
                 }
             }
 
+            step = "5-done";
             stateManager.SetState(AppState.Anchored);
-            debugPanel?.UpdateTrackingState(isFrozen ? "Frozen" : $"Anchored ({placed})");
         }
         catch (Exception ex)
         {
             Debug.LogException(ex);
-            stateManager.SetState(AppState.Error);
-            debugPanel?.UpdateTrackingState("Pipeline error");
-            debugPanel?.UpdateTranslatedText(ex.Message);
+            string fullError = $"[{step}] {ex.GetType().Name}\n\n{ex.Message}\n\n{ex.StackTrace}";
+            stateManager.SetError($"[{step}] LỖI - xem overlay");
+            ShowErrorOverlay(fullError);
         }
+    }
+
+    private GameObject errorOverlay;
+
+    private void ShowErrorOverlay(string errorText)
+    {
+        if (errorOverlay != null) Destroy(errorOverlay);
+
+        // Tạo Canvas riêng
+        errorOverlay = new GameObject("ErrorOverlay");
+        var canvas = errorOverlay.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 9999;
+        errorOverlay.AddComponent<UnityEngine.UI.CanvasScaler>();
+        errorOverlay.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+
+        // Nền đen mờ
+        var bgObj = new GameObject("BG");
+        bgObj.transform.SetParent(errorOverlay.transform, false);
+        var bgImage = bgObj.AddComponent<UnityEngine.UI.Image>();
+        bgImage.color = new Color(0f, 0f, 0f, 0.92f);
+        var bgRect = bgObj.GetComponent<RectTransform>();
+        bgRect.anchorMin = Vector2.zero;
+        bgRect.anchorMax = Vector2.one;
+        bgRect.offsetMin = Vector2.zero;
+        bgRect.offsetMax = Vector2.zero;
+
+        // Text lỗi
+        var textObj = new GameObject("ErrorText");
+        textObj.transform.SetParent(bgObj.transform, false);
+        var text = textObj.AddComponent<TMPro.TextMeshProUGUI>();
+        text.text = errorText;
+        text.fontSize = 24;
+        text.color = new Color(1f, 0.4f, 0.4f, 1f);
+        text.alignment = TMPro.TextAlignmentOptions.TopLeft;
+        text.enableWordWrapping = true;
+        text.overflowMode = TMPro.TextOverflowModes.Overflow;
+        var textRect = textObj.GetComponent<RectTransform>();
+        textRect.anchorMin = new Vector2(0.05f, 0.1f);
+        textRect.anchorMax = new Vector2(0.95f, 0.85f);
+        textRect.offsetMin = Vector2.zero;
+        textRect.offsetMax = Vector2.zero;
+
+        // Nút đóng
+        var btnObj = new GameObject("CloseBtn");
+        btnObj.transform.SetParent(bgObj.transform, false);
+        var btnImage = btnObj.AddComponent<UnityEngine.UI.Image>();
+        btnImage.color = new Color(0.9f, 0.2f, 0.2f, 1f);
+        var btnRect = btnObj.GetComponent<RectTransform>();
+        btnRect.anchorMin = new Vector2(0.3f, 0.02f);
+        btnRect.anchorMax = new Vector2(0.7f, 0.08f);
+        btnRect.offsetMin = Vector2.zero;
+        btnRect.offsetMax = Vector2.zero;
+        var btn = btnObj.AddComponent<UnityEngine.UI.Button>();
+        btn.onClick.AddListener(() => { Destroy(errorOverlay); errorOverlay = null; });
+
+        var btnTextObj = new GameObject("BtnText");
+        btnTextObj.transform.SetParent(btnObj.transform, false);
+        var btnText = btnTextObj.AddComponent<TMPro.TextMeshProUGUI>();
+        btnText.text = "ĐÓNG";
+        btnText.fontSize = 28;
+        btnText.color = Color.white;
+        btnText.alignment = TMPro.TextAlignmentOptions.Center;
+        var btnTextRect = btnTextObj.GetComponent<RectTransform>();
+        btnTextRect.anchorMin = Vector2.zero;
+        btnTextRect.anchorMax = Vector2.one;
+        btnTextRect.offsetMin = Vector2.zero;
+        btnTextRect.offsetMax = Vector2.zero;
     }
 
     private async System.Threading.Tasks.Task<PipelineResponse> RunPipelineAsync()
@@ -161,18 +224,11 @@ public class ButtonController : MonoBehaviour
 
         if (useBackendPipeline && httpPipelineClient != null)
         {
-            try
-            {
-                return await RunBackendPipelineAsync(frame);
-            }
-            catch (Exception)
-            {
-                if (!fallbackToUnityMockOnBackendError) throw;
-                Debug.LogWarning("[ButtonController] Backend pipeline failed, falling back to Unity mock pipeline.");
-            }
+            // Không fallback sang mock — luôn hiện lỗi thật để debug
+            return await RunBackendPipelineAsync(frame);
         }
 
-        debugPanel?.UpdateTrackingState("Unity mock OCR/Translate");
+        // Chỉ dùng mock khi useBackendPipeline = false
         var mockClient = new MockPipelineClient();
         return await mockClient.SendFrameAsync(
             frame.frameId,

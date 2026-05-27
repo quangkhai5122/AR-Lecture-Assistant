@@ -1,4 +1,4 @@
-﻿// UIManager.cs
+// UIManager.cs
 // Đặt tại: Assets/Scripts/UI/UIManager.cs
 // Mục đích: Điều phối tổng thể giữa AR và UI, là "bộ não" của app
 
@@ -96,6 +96,23 @@ public class UIManager : MonoBehaviour
             {
                 stateManager.SetState(AppState.PlaneDetected);
                 Debug.Log($"[UIManager] Plane detected! Count: {args.added.Count}");
+
+                // Cache plane pose cho ARLabelPlacer — dùng khi camera di gần và raycast miss
+                if (labelPlacer != null && raycastController != null)
+                {
+                    if (raycastController.TryRaycastFromCenter(out UnityEngine.Pose hitPose))
+                    {
+                        labelPlacer.CachePlanePose(hitPose);
+                    }
+                    else
+                    {
+                        // Dùng pose của plane đầu tiên
+                        var plane = args.added[0];
+                        labelPlacer.CachePlanePose(new UnityEngine.Pose(
+                            plane.transform.position,
+                            plane.transform.rotation));
+                    }
+                }
             }
         }
     }

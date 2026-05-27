@@ -17,13 +17,13 @@ public class DebugPanelController : MonoBehaviour
 
     void Start()
     {
-        toggleButton.onClick.AddListener(TogglePanel);
-        panelRoot.SetActive(false);
+        if (toggleButton != null) toggleButton.onClick.AddListener(TogglePanel);
+        if (panelRoot != null) panelRoot.SetActive(false);
     }
 
     void Update()
     {
-        if (isVisible)
+        if (isVisible && fpsText != null)
         {
             fpsText.text = $"FPS: {1f / Time.deltaTime:F0}";
         }
@@ -37,12 +37,12 @@ public class DebugPanelController : MonoBehaviour
 
     public void UpdateOCRText(string text)
     {
-        ocrTextField.text = $"OCR Raw:\n{text}";
+        if (ocrTextField != null) ocrTextField.text = $"OCR Raw:\n{text}";
     }
 
     public void UpdateTranslatedText(string text)
     {
-        translatedTextField.text = $"Translated:\n{text}";
+        if (translatedTextField != null) translatedTextField.text = $"Translated:\n{text}";
     }
 
     public void UpdatePipelineResponse(PipelineResponse response)
@@ -165,12 +165,12 @@ public class DebugPanelController : MonoBehaviour
 
     public void UpdateTrackingState(string state)
     {
-        trackingStateText.text = $"Tracking: {state}";
+        if (trackingStateText != null) trackingStateText.text = $"Tracking: {state}";
     }
 
     public void ClearAll()
     {
-        ocrTextField.text = "OCR Raw:\n-";
-        translatedTextField.text = "Translated:\n-";
+        if (ocrTextField != null) ocrTextField.text = "OCR Raw:\n-";
+        if (translatedTextField != null) translatedTextField.text = "Translated:\n-";
     }
 }

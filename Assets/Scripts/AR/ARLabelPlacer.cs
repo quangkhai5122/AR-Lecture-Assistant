@@ -1,4 +1,4 @@
-﻿// ARLabelPlacer.cs — Hỗ trợ multi-label
+// ARLabelPlacer.cs — Hỗ trợ multi-label
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
@@ -30,6 +30,18 @@ public class ARLabelPlacer : MonoBehaviour
     private readonly List<Vector2> placedScreenPoints = new List<Vector2>();
     private GameObject currentSubtitle;
 
+    // Cache pose plane cuối cùng — dùng làm fallback khi raycast miss
+    private Pose? cachedPlanePose = null;
+
+    /// <summary>
+    /// Gọi khi detect plane thành công — lưu pose để dùng khi camera di gần
+    /// </summary>
+    public void CachePlanePose(Pose pose)
+    {
+        cachedPlanePose = pose;
+        Debug.Log($"[ARLabelPlacer] Cached plane pose at {pose.position}");
+    }
+
     /// <summary>
     /// Đặt Fixed Label bám trên slide/bảng tại vị trí tap
     /// Có thể đặt nhiều label cùng lúc
@@ -41,10 +53,28 @@ public class ARLabelPlacer : MonoBehaviour
 
     public bool TryPlaceFixedLabel(string translatedText, Vector2 screenPos)
     {
-        if (raycastController == null || anchorPlacer == null || fixedLabelPrefab == null)
+        if (fixedLabelPrefab == null)
         {
-            Debug.LogWarning("[ARLabelPlacer] Missing AR label dependencies.");
+            Debug.LogWarning("[ARLabelPlacer] fixedLabelPrefab is null.");
             return false;
+        }
+        if (raycastController == null)
+        {
+            raycastController = FindAnyObjectByType<ARRaycastController>();
+            if (raycastController == null)
+            {
+                Debug.LogWarning("[ARLabelPlacer] ARRaycastController not found.");
+                return false;
+            }
+        }
+        if (anchorPlacer == null)
+        {
+            anchorPlacer = FindAnyObjectByType<ARAnchorPlacer>();
+            if (anchorPlacer == null)
+            {
+                Debug.LogWarning("[ARLabelPlacer] ARAnchorPlacer not found.");
+                return false;
+            }
         }
 
         Vector2 resolvedScreenPos = ResolveNonOverlappingScreenPoint(screenPos);
@@ -70,9 +100,34 @@ public class ARLabelPlacer : MonoBehaviour
     {
         if (response == null || response.blocks == null) return 0;
 
+        // Auto-find dependencies nếu chưa được gán trong Inspector
+        if (raycastController == null)
+            raycastController = FindAnyObjectByType<ARRaycastController>();
+        if (anchorPlacer == null)
+            anchorPlacer = FindAnyObjectByType<ARAnchorPlacer>();
+        if (raycastController == null || anchorPlacer == null || fixedLabelPrefab == null)
+        {
+            Debug.LogWarning($"[ARLabelPlacer] PlacePipelineLabels: missing deps");
+            return 0;
+        }
+
         ClearFixedLabels();
+
+        // Pre-cache center raycast — fallback khi per-block raycast miss
+        bool hasCenterHit = raycastController.TryRaycastFromCenter(out Pose centerPose);
+        if (hasCenterHit)
+        {
+            cachedPlanePose = centerPose; // Lưu để dùng khi raycast miss sau này
+        }
+
+        // Xác định fallback pose (center hit hoặc cached từ lúc detect plane)
+        Pose? fallbackPose = hasCenterHit ? centerPose : cachedPlanePose;
+        bool hasFallback = fallbackPose.HasValue;
+
         DocumentSurfaceMapper surfaceMapper = DocumentSurfaceMapper.TryCreate(response, raycastController, BBoxPointToScreenPoint);
         int placed = 0;
+        int blockIndex = 0;
+
         foreach (PipelineBlock block in response.blocks)
         {
             if (block == null || block.bbox == null || block.bbox.Length < 4) continue;
@@ -87,23 +142,47 @@ public class ARLabelPlacer : MonoBehaviour
             Vector2 resolvedScreenPoint = ResolveNonOverlappingScreenPoint(screenPoint);
             Vector2 resolvedImagePoint = ScreenPointToImagePoint(resolvedScreenPoint, response.image_width, response.image_height);
             bool labelPlaced = false;
+
+            // Path A: SurfaceMapper (homography)
             if (surfaceMapper != null && surfaceMapper.TryMapImagePointToPose(resolvedImagePoint, out Pose surfacePose))
             {
                 labelPlaced = CreateFixedLabel(text, surfacePose);
+                if (labelPlaced) placedScreenPoints.Add(resolvedScreenPoint);
+            }
+
+            // Path B: Per-block raycast
+            if (!labelPlaced && TryPlaceFixedLabel(text, resolvedScreenPoint))
+            {
+                labelPlaced = true;
+            }
+
+            // Path C+D: Fallback — dùng center raycast hoặc cached plane pose
+            if (!labelPlaced && hasFallback)
+            {
+                Pose basePose = fallbackPose.Value;
+
+                // Tính offset dựa trên vị trí bbox so với center screen
+                float normalizedX = (screenPoint.x / Screen.width) - 0.5f;
+                float normalizedY = (screenPoint.y / Screen.height) - 0.5f;
+                float spreadFactor = 0.3f; // khoảng cách spread (meters)
+
+                Vector3 right = basePose.rotation * Vector3.right;
+                Vector3 forward = basePose.rotation * Vector3.forward;
+                Vector3 offset = right * normalizedX * spreadFactor +
+                                 forward * normalizedY * spreadFactor +
+                                 forward * blockIndex * 0.03f;
+
+                Pose offsetPose = new Pose(basePose.position + offset, basePose.rotation);
+                labelPlaced = CreateFixedLabel(text, offsetPose);
                 if (labelPlaced)
                 {
                     placedScreenPoints.Add(resolvedScreenPoint);
+                    Debug.Log($"[ARLabelPlacer] Block {blockIndex} placed via fallback pose");
                 }
             }
 
-            if (!labelPlaced && TryPlaceFixedLabel(text, resolvedScreenPoint))
-            {
-                placed++;
-            }
-            else if (labelPlaced)
-            {
-                placed++;
-            }
+            if (labelPlaced) placed++;
+            blockIndex++;
         }
 
         return placed;
@@ -172,8 +251,20 @@ public class ARLabelPlacer : MonoBehaviour
     /// </summary>
     public void ShowSubtitle(string translatedText)
     {
+        if (subtitlePrefab == null)
+        {
+            Debug.LogWarning("[ARLabelPlacer] subtitlePrefab is null, cannot show subtitle.");
+            return;
+        }
+
         if (currentSubtitle == null)
         {
+            // Nếu subtitleContainer chưa được gán trong Inspector, tìm Canvas đầu tiên
+            if (subtitleContainer == null)
+            {
+                Canvas canvas = FindAnyObjectByType<Canvas>();
+                if (canvas != null) subtitleContainer = canvas.transform;
+            }
             currentSubtitle = Instantiate(subtitlePrefab, subtitleContainer);
         }
 
