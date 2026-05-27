@@ -46,11 +46,11 @@ public class ARLectureVisualPolish : MonoBehaviour
         foreach (TextMeshProUGUI text in labelRoot.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
             text.color = TextColor;
-            text.fontSize = Mathf.Clamp(text.fontSize, 18f, 32f);
+            text.fontSize = Mathf.Clamp(text.fontSize, 15f, 30f);
             text.enableAutoSizing = true;
-            text.fontSizeMin = 16f;
-            text.fontSizeMax = 32f;
-            text.maxVisibleLines = 4;
+            text.fontSizeMin = 15f;
+            text.fontSizeMax = 30f;
+            text.maxVisibleLines = 6;
             text.enableWordWrapping = true;
             text.overflowMode = TextOverflowModes.Ellipsis;
             text.fontStyle = FontStyles.Bold;

@@ -20,14 +20,18 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private float minScreenSeparationPixels = 96f;
     [SerializeField] private float overlapStepPixels = 72f;
     [SerializeField] private int overlapSearchAttempts = 8;
+    [SerializeField] private float labelScreenPaddingPixels = 24f;
     [SerializeField] private float minDistanceScale = 0.75f;
     [SerializeField] private float maxDistanceScale = 1.25f;
-    [SerializeField] private int maxLabelCharacters = 140;
+    [SerializeField] private int maxLabelCharacters = 260;
     [SerializeField] private int maxSubtitleCharacters = 220;
+    [SerializeField] private bool groupNearbyTextBlocks = true;
+    [SerializeField] private float groupMaxVerticalGapRatio = 0.09f;
 
     // Quản lý nhiều label cùng lúc
     private List<GameObject> fixedLabels = new List<GameObject>();
     private readonly List<Vector2> placedScreenPoints = new List<Vector2>();
+    private readonly List<Rect> placedScreenRects = new List<Rect>();
     private GameObject currentSubtitle;
 
     // Cache pose plane cuối cùng — dùng làm fallback khi raycast miss
@@ -77,7 +81,7 @@ public class ARLabelPlacer : MonoBehaviour
             }
         }
 
-        Vector2 resolvedScreenPos = ResolveNonOverlappingScreenPoint(screenPos);
+        Vector2 resolvedScreenPos = ResolveNonOverlappingScreenPoint(screenPos, translatedText);
         bool hit = raycastController.TryRaycast(resolvedScreenPos, out Pose hitPose);
         Vector2 placedScreenPos = resolvedScreenPos;
         if (!hit && resolvedScreenPos != screenPos)
@@ -89,7 +93,7 @@ public class ARLabelPlacer : MonoBehaviour
         if (hit)
         {
             if (!CreateFixedLabel(translatedText, hitPose)) return false;
-            placedScreenPoints.Add(placedScreenPos);
+            RegisterPlacedLabel(placedScreenPos, translatedText);
             return true;
         }
 
@@ -125,21 +129,16 @@ public class ARLabelPlacer : MonoBehaviour
         bool hasFallback = fallbackPose.HasValue;
 
         DocumentSurfaceMapper surfaceMapper = DocumentSurfaceMapper.TryCreate(response, raycastController, BBoxPointToScreenPoint);
+        List<TranslationLabelGroup> labelGroups = BuildTranslationLabelGroups(response);
         int placed = 0;
-        int blockIndex = 0;
 
-        foreach (PipelineBlock block in response.blocks)
+        for (int groupIndex = 0; groupIndex < labelGroups.Count; groupIndex++)
         {
-            if (block == null || block.bbox == null || block.bbox.Length < 4) continue;
-
-            string text = string.IsNullOrWhiteSpace(block.translated_text)
-                ? block.source_text
-                : block.translated_text;
-            if (string.IsNullOrWhiteSpace(text)) continue;
-
-            Vector2 imagePoint = BBoxCenterToImagePoint(block.bbox);
-            Vector2 screenPoint = ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height);
-            Vector2 resolvedScreenPoint = ResolveNonOverlappingScreenPoint(screenPoint);
+            TranslationLabelGroup group = labelGroups[groupIndex];
+            Vector2 imagePoint = group.ImagePoint;
+            Vector2 screenPoint = group.ScreenPoint;
+            string text = group.Text;
+            Vector2 resolvedScreenPoint = ResolveNonOverlappingScreenPoint(screenPoint, text);
             Vector2 resolvedImagePoint = ScreenPointToImagePoint(resolvedScreenPoint, response.image_width, response.image_height);
             bool labelPlaced = false;
 
@@ -147,7 +146,7 @@ public class ARLabelPlacer : MonoBehaviour
             if (surfaceMapper != null && surfaceMapper.TryMapImagePointToPose(resolvedImagePoint, out Pose surfacePose))
             {
                 labelPlaced = CreateFixedLabel(text, surfacePose);
-                if (labelPlaced) placedScreenPoints.Add(resolvedScreenPoint);
+                if (labelPlaced) RegisterPlacedLabel(resolvedScreenPoint, text);
             }
 
             // Path B: Per-block raycast
@@ -170,19 +169,18 @@ public class ARLabelPlacer : MonoBehaviour
                 Vector3 forward = basePose.rotation * Vector3.forward;
                 Vector3 offset = right * normalizedX * spreadFactor +
                                  forward * normalizedY * spreadFactor +
-                                 forward * blockIndex * 0.03f;
+                                 forward * groupIndex * 0.04f;
 
                 Pose offsetPose = new Pose(basePose.position + offset, basePose.rotation);
                 labelPlaced = CreateFixedLabel(text, offsetPose);
                 if (labelPlaced)
                 {
-                    placedScreenPoints.Add(resolvedScreenPoint);
-                    Debug.Log($"[ARLabelPlacer] Block {blockIndex} placed via fallback pose");
+                    RegisterPlacedLabel(resolvedScreenPoint, text);
+                    Debug.Log($"[ARLabelPlacer] Group {groupIndex} placed via fallback pose");
                 }
             }
 
             if (labelPlaced) placed++;
-            blockIndex++;
         }
 
         return placed;
@@ -243,6 +241,120 @@ public class ARLabelPlacer : MonoBehaviour
         float imageX = screenPoint.x / Mathf.Max(1f, Screen.width) * imageWidth;
         float imageY = (Screen.height - screenPoint.y) / Mathf.Max(1f, Screen.height) * imageHeight;
         return new Vector2(imageX, imageY);
+    }
+
+    private List<TranslationLabelGroup> BuildTranslationLabelGroups(PipelineResponse response)
+    {
+        var items = new List<TranslationLabelItem>();
+        if (response?.blocks == null) return new List<TranslationLabelGroup>();
+
+        foreach (PipelineBlock block in response.blocks)
+        {
+            if (block == null || block.bbox == null || block.bbox.Length < 4) continue;
+
+            string text = string.IsNullOrWhiteSpace(block.translated_text)
+                ? block.source_text
+                : block.translated_text;
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            Rect bbox = BBoxToImageRect(block.bbox);
+            if (bbox.width <= 0f || bbox.height <= 0f) continue;
+
+            Vector2 imagePoint = bbox.center;
+            items.Add(new TranslationLabelItem
+            {
+                Text = text.Trim(),
+                BBox = bbox,
+                ImagePoint = imagePoint,
+                ScreenPoint = ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height)
+            });
+        }
+
+        items.Sort((a, b) =>
+        {
+            int yCompare = a.BBox.yMin.CompareTo(b.BBox.yMin);
+            return yCompare != 0 ? yCompare : a.BBox.xMin.CompareTo(b.BBox.xMin);
+        });
+
+        if (!groupNearbyTextBlocks || items.Count <= 1)
+        {
+            var singleGroups = new List<TranslationLabelGroup>();
+            foreach (TranslationLabelItem item in items)
+            {
+                singleGroups.Add(TranslationLabelGroup.FromItems(new List<TranslationLabelItem> { item }, response, this));
+            }
+            return singleGroups;
+        }
+
+        var groups = new List<List<TranslationLabelItem>>();
+        float maxGap = Mathf.Max(24f, response.image_height * groupMaxVerticalGapRatio);
+
+        foreach (TranslationLabelItem item in items)
+        {
+            List<TranslationLabelItem> targetGroup = null;
+            foreach (List<TranslationLabelItem> group in groups)
+            {
+                if (CanJoinGroup(item, group, maxGap))
+                {
+                    targetGroup = group;
+                    break;
+                }
+            }
+
+            if (targetGroup == null)
+            {
+                targetGroup = new List<TranslationLabelItem>();
+                groups.Add(targetGroup);
+            }
+
+            targetGroup.Add(item);
+        }
+
+        var result = new List<TranslationLabelGroup>();
+        foreach (List<TranslationLabelItem> group in groups)
+        {
+            result.Add(TranslationLabelGroup.FromItems(group, response, this));
+        }
+
+        return result;
+    }
+
+    private static bool CanJoinGroup(TranslationLabelItem item, List<TranslationLabelItem> group, float maxGap)
+    {
+        if (group == null || group.Count == 0) return false;
+
+        Rect union = group[0].BBox;
+        for (int i = 1; i < group.Count; i++)
+        {
+            union = UnionRect(union, group[i].BBox);
+        }
+
+        float verticalGap = Mathf.Max(0f, item.BBox.yMin - union.yMax);
+        float horizontalOverlap = Mathf.Min(union.xMax, item.BBox.xMax) - Mathf.Max(union.xMin, item.BBox.xMin);
+        float minWidth = Mathf.Max(1f, Mathf.Min(union.width, item.BBox.width));
+        bool overlapsHorizontally = horizontalOverlap / minWidth > 0.12f;
+        bool centersClose = Mathf.Abs(item.BBox.center.x - union.center.x) < Mathf.Max(union.width, item.BBox.width) * 0.65f;
+
+        return verticalGap <= maxGap && (overlapsHorizontally || centersClose);
+    }
+
+    private static Rect BBoxToImageRect(float[] bbox)
+    {
+        float xMin = Mathf.Min(bbox[0], bbox[2]);
+        float yMin = Mathf.Min(bbox[1], bbox[3]);
+        float xMax = Mathf.Max(bbox[0], bbox[2]);
+        float yMax = Mathf.Max(bbox[1], bbox[3]);
+        return Rect.MinMaxRect(xMin, yMin, xMax, yMax);
+    }
+
+    private static Rect UnionRect(Rect a, Rect b)
+    {
+        return Rect.MinMaxRect(
+            Mathf.Min(a.xMin, b.xMin),
+            Mathf.Min(a.yMin, b.yMin),
+            Mathf.Max(a.xMax, b.xMax),
+            Mathf.Max(a.yMax, b.yMax)
+        );
     }
 
     /// <summary>
@@ -309,6 +421,7 @@ public class ARLabelPlacer : MonoBehaviour
         }
         fixedLabels.Clear();
         placedScreenPoints.Clear();
+        placedScreenRects.Clear();
     }
 
     /// <summary>
@@ -320,15 +433,17 @@ public class ARLabelPlacer : MonoBehaviour
         HideSubtitle();
     }
 
-    private Vector2 ResolveNonOverlappingScreenPoint(Vector2 desiredPoint)
+    private Vector2 ResolveNonOverlappingScreenPoint(Vector2 desiredPoint, string labelText)
     {
         Vector2 clamped = ClampToSafeScreen(desiredPoint);
-        if (IsFarEnoughFromPlacedLabels(clamped)) return clamped;
+        if (IsFarEnoughFromPlacedLabels(clamped, labelText)) return clamped;
 
         Vector2[] directions =
         {
             Vector2.up,
+            Vector2.up * 2f,
             Vector2.down,
+            Vector2.down * 2f,
             Vector2.right,
             Vector2.left,
             new Vector2(1f, 1f).normalized,
@@ -344,7 +459,7 @@ public class ARLabelPlacer : MonoBehaviour
             foreach (Vector2 direction in directions)
             {
                 Vector2 candidate = ClampToSafeScreen(desiredPoint + direction * distance);
-                if (IsFarEnoughFromPlacedLabels(candidate)) return candidate;
+                if (IsFarEnoughFromPlacedLabels(candidate, labelText)) return candidate;
             }
         }
 
@@ -364,7 +479,7 @@ public class ARLabelPlacer : MonoBehaviour
         if (textComp != null)
         {
             textComp.text = Ellipsize(translatedText, maxLabelCharacters);
-            ConfigureReadableText(textComp, 16f, 32f, 4);
+            ConfigureReadableText(textComp, 15f, 30f, 6);
         }
 
         ARLectureVisualPolish.StyleLabel(label);
@@ -373,7 +488,13 @@ public class ARLabelPlacer : MonoBehaviour
         return true;
     }
 
-    private bool IsFarEnoughFromPlacedLabels(Vector2 candidate)
+    private void RegisterPlacedLabel(Vector2 screenPoint, string labelText)
+    {
+        placedScreenPoints.Add(screenPoint);
+        placedScreenRects.Add(EstimateLabelScreenRect(screenPoint, labelText));
+    }
+
+    private bool IsFarEnoughFromPlacedLabels(Vector2 candidate, string labelText)
     {
         float minDistanceSquared = minScreenSeparationPixels * minScreenSeparationPixels;
         foreach (Vector2 point in placedScreenPoints)
@@ -384,15 +505,40 @@ public class ARLabelPlacer : MonoBehaviour
             }
         }
 
+        Rect candidateRect = EstimateLabelScreenRect(candidate, labelText);
+        foreach (Rect placedRect in placedScreenRects)
+        {
+            if (candidateRect.Overlaps(placedRect))
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 
     private Vector2 ClampToSafeScreen(Vector2 point)
     {
-        float margin = Mathf.Max(48f, minScreenSeparationPixels * 0.5f);
+        float margin = Mathf.Max(64f, minScreenSeparationPixels * 0.5f);
         return new Vector2(
             Mathf.Clamp(point.x, margin, Screen.width - margin),
             Mathf.Clamp(point.y, margin, Screen.height - margin)
+        );
+    }
+
+    private Rect EstimateLabelScreenRect(Vector2 center, string labelText)
+    {
+        int length = string.IsNullOrWhiteSpace(labelText) ? 24 : Mathf.Min(labelText.Trim().Length, maxLabelCharacters);
+        float width = Mathf.Clamp(260f + length * 4.8f, 320f, Mathf.Min(760f, Screen.width * 0.92f));
+        float height = length > 180 ? 260f : length > 110 ? 220f : length > 56 ? 170f : 128f;
+        width += labelScreenPaddingPixels * 2f;
+        height += labelScreenPaddingPixels * 2f;
+
+        return new Rect(
+            center.x - width * 0.5f,
+            center.y - height * 0.5f,
+            width,
+            height
         );
     }
 
@@ -411,8 +557,8 @@ public class ARLabelPlacer : MonoBehaviour
         if (label == null || textComp == null) return;
 
         int length = textComp.text == null ? 0 : textComp.text.Length;
-        float width = Mathf.Clamp(260f + length * 2.4f, 280f, 520f);
-        float height = length > 96 ? 150f : length > 52 ? 124f : 96f;
+        float width = Mathf.Clamp(260f + length * 2.2f, 300f, 620f);
+        float height = length > 180 ? 230f : length > 110 ? 190f : length > 52 ? 140f : 104f;
 
         RectTransform textRect = textComp.GetComponent<RectTransform>();
         if (textRect != null)
@@ -452,6 +598,46 @@ public class ARLabelPlacer : MonoBehaviour
         if (maxCharacters <= 3 || trimmed.Length <= maxCharacters) return trimmed;
 
         return trimmed.Substring(0, maxCharacters - 1).TrimEnd() + "…";
+    }
+
+    private sealed class TranslationLabelItem
+    {
+        public string Text;
+        public Rect BBox;
+        public Vector2 ImagePoint;
+        public Vector2 ScreenPoint;
+    }
+
+    private sealed class TranslationLabelGroup
+    {
+        public string Text;
+        public Rect BBox;
+        public Vector2 ImagePoint;
+        public Vector2 ScreenPoint;
+
+        public static TranslationLabelGroup FromItems(List<TranslationLabelItem> items, PipelineResponse response, ARLabelPlacer placer)
+        {
+            Rect union = items[0].BBox;
+            var lines = new List<string>();
+
+            foreach (TranslationLabelItem item in items)
+            {
+                union = UnionRect(union, item.BBox);
+                if (!string.IsNullOrWhiteSpace(item.Text))
+                {
+                    lines.Add(item.Text.Trim());
+                }
+            }
+
+            Vector2 imagePoint = union.center;
+            return new TranslationLabelGroup
+            {
+                Text = string.Join("\n", lines),
+                BBox = union,
+                ImagePoint = imagePoint,
+                ScreenPoint = placer.ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height)
+            };
+        }
     }
 
     private sealed class DocumentSurfaceMapper
