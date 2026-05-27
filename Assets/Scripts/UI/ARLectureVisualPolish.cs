@@ -50,7 +50,7 @@ public class ARLectureVisualPolish : MonoBehaviour
             text.enableAutoSizing = true;
             text.fontSizeMin = 15f;
             text.fontSizeMax = 30f;
-            text.maxVisibleLines = 6;
+            text.maxVisibleLines = 99;
             text.enableWordWrapping = true;
             text.overflowMode = TextOverflowModes.Ellipsis;
             text.fontStyle = FontStyles.Bold;

@@ -23,7 +23,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private float labelScreenPaddingPixels = 24f;
     [SerializeField] private float minDistanceScale = 0.75f;
     [SerializeField] private float maxDistanceScale = 1.25f;
-    [SerializeField] private int maxLabelCharacters = 260;
+    [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
     [SerializeField] private bool groupNearbyTextBlocks = true;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.09f;
@@ -479,7 +479,7 @@ public class ARLabelPlacer : MonoBehaviour
         if (textComp != null)
         {
             textComp.text = Ellipsize(translatedText, maxLabelCharacters);
-            ConfigureReadableText(textComp, 15f, 30f, 6);
+            ConfigureReadableText(textComp, 14f, 30f, 0);
         }
 
         ARLectureVisualPolish.StyleLabel(label);
@@ -528,9 +528,11 @@ public class ARLabelPlacer : MonoBehaviour
 
     private Rect EstimateLabelScreenRect(Vector2 center, string labelText)
     {
-        int length = string.IsNullOrWhiteSpace(labelText) ? 24 : Mathf.Min(labelText.Trim().Length, maxLabelCharacters);
+        string normalizedText = string.IsNullOrWhiteSpace(labelText) ? "" : labelText.Trim();
+        int length = normalizedText.Length == 0 ? 24 : Mathf.Min(normalizedText.Length, maxLabelCharacters);
+        int lines = EstimateLineCount(normalizedText);
         float width = Mathf.Clamp(260f + length * 4.8f, 320f, Mathf.Min(760f, Screen.width * 0.92f));
-        float height = length > 180 ? 260f : length > 110 ? 220f : length > 56 ? 170f : 128f;
+        float height = Mathf.Clamp(96f + lines * 42f, 140f, Screen.height * 0.78f);
         width += labelScreenPaddingPixels * 2f;
         height += labelScreenPaddingPixels * 2f;
 
@@ -557,8 +559,9 @@ public class ARLabelPlacer : MonoBehaviour
         if (label == null || textComp == null) return;
 
         int length = textComp.text == null ? 0 : textComp.text.Length;
+        int lines = EstimateLineCount(textComp.text);
         float width = Mathf.Clamp(260f + length * 2.2f, 300f, 620f);
-        float height = length > 180 ? 230f : length > 110 ? 190f : length > 52 ? 140f : 104f;
+        float height = Mathf.Clamp(92f + lines * 34f, 112f, 420f);
 
         RectTransform textRect = textComp.GetComponent<RectTransform>();
         if (textRect != null)
@@ -585,7 +588,7 @@ public class ARLabelPlacer : MonoBehaviour
         text.enableAutoSizing = true;
         text.fontSizeMin = minSize;
         text.fontSizeMax = maxSize;
-        text.maxVisibleLines = maxLines;
+        text.maxVisibleLines = maxLines <= 0 ? 99 : maxLines;
         text.alignment = TextAlignmentOptions.Center;
         text.margin = new Vector4(8f, 6f, 8f, 6f);
     }
@@ -598,6 +601,21 @@ public class ARLabelPlacer : MonoBehaviour
         if (maxCharacters <= 3 || trimmed.Length <= maxCharacters) return trimmed;
 
         return trimmed.Substring(0, maxCharacters - 1).TrimEnd() + "…";
+    }
+
+    private static int EstimateLineCount(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return 1;
+
+        string[] explicitLines = text.Split('\n');
+        int total = 0;
+        foreach (string line in explicitLines)
+        {
+            int length = string.IsNullOrWhiteSpace(line) ? 1 : line.Trim().Length;
+            total += Mathf.Max(1, Mathf.CeilToInt(length / 34f));
+        }
+
+        return Mathf.Max(1, total);
     }
 
     private sealed class TranslationLabelItem
