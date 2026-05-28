@@ -28,7 +28,7 @@ public class ButtonController : MonoBehaviour
     [SerializeField] private bool fallbackToUnityMockOnBackendError = true;
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private BackendPipelineMode backendPipelineMode = BackendPipelineMode.PipelineFrame;
-    [SerializeField] private string ocrProvider = "tesseract";
+    [SerializeField] private string ocrProvider = "";
     [SerializeField] private string translationProvider = "google";
     [SerializeField] private FrameCaptureService frameCaptureService;
     [SerializeField] private HttpPipelineClient httpPipelineClient;
@@ -116,7 +116,7 @@ public class ButtonController : MonoBehaviour
             int readableBlocks = labelPlacer != null ? labelPlacer.CountReadableBlocks(response) : CountReadableBlocks(response);
             if (readableBlocks == 0)
             {
-                stateManager.SetError("OCR không đọc được chữ. Đưa camera gần slide hơn.");
+                stateManager.SetError("OCR chua doc duoc chu. Giu camera on dinh va thu lai voi anh ro hon.");
                 return;
             }
 

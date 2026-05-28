@@ -25,10 +25,16 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private float maxDistanceScale = 1.25f;
     [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
-    [SerializeField] private bool groupNearbyTextBlocks = true;
-    [SerializeField] private bool googleLensSingleOverlay = true;
+    [SerializeField] private bool groupNearbyTextBlocks = false;
+    [SerializeField] private bool googleLensSingleOverlay = false;
     [SerializeField] private bool useScreenSpaceTranslationOverlay = true;
+    [SerializeField] private bool mergeSameLineTextBlocks = false;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.16f;
+    [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.91f, 0.95f, 0.98f, 0.92f);
+    [SerializeField] private Color lensOverlayTextColor = new Color(0.10f, 0.11f, 0.12f, 0.98f);
+    [SerializeField] private float lensOverlayWidthExpansion = 1.14f;
+    [SerializeField] private float lensOverlayHeightExpansion = 1.10f;
+    [SerializeField] private int lensOverlayMaxLines = 4;
 
     // Quản lý nhiều label cùng lúc
     private List<GameObject> fixedLabels = new List<GameObject>();
@@ -295,12 +301,23 @@ public class ARLabelPlacer : MonoBehaviour
             return yCompare != 0 ? yCompare : a.BBox.xMin.CompareTo(b.BBox.xMin);
         });
 
+        if (mergeSameLineTextBlocks)
+        {
+            List<TranslationLabelGroup> lineGroups = BuildSameLineLabelGroups(items, response);
+            if (!groupNearbyTextBlocks || lineGroups.Count <= 1)
+            {
+                return lineGroups;
+            }
+
+            items = FlattenGroupsToItems(lineGroups);
+        }
+
         if (!groupNearbyTextBlocks || items.Count <= 1)
         {
             var singleGroups = new List<TranslationLabelGroup>();
             foreach (TranslationLabelItem item in items)
             {
-                singleGroups.Add(TranslationLabelGroup.FromItems(new List<TranslationLabelItem> { item }, response, this));
+                singleGroups.Add(TranslationLabelGroup.FromItems(new List<TranslationLabelItem> { item }, response, this, false));
             }
             return singleGroups;
         }
@@ -309,7 +326,7 @@ public class ARLabelPlacer : MonoBehaviour
         {
             return new List<TranslationLabelGroup>
             {
-                TranslationLabelGroup.FromItems(items, response, this)
+                TranslationLabelGroup.FromItems(items, response, this, true)
             };
         }
 
@@ -340,10 +357,109 @@ public class ARLabelPlacer : MonoBehaviour
         var result = new List<TranslationLabelGroup>();
         foreach (List<TranslationLabelItem> group in groups)
         {
-            result.Add(TranslationLabelGroup.FromItems(group, response, this));
+            result.Add(TranslationLabelGroup.FromItems(group, response, this, true));
         }
 
         return result;
+    }
+
+    private List<TranslationLabelGroup> BuildSameLineLabelGroups(List<TranslationLabelItem> items, PipelineResponse response)
+    {
+        var lineItems = new List<List<TranslationLabelItem>>();
+        foreach (TranslationLabelItem item in items)
+        {
+            List<TranslationLabelItem> bestLine = null;
+            float bestDistance = float.MaxValue;
+
+            foreach (List<TranslationLabelItem> line in lineItems)
+            {
+                if (!CanJoinSameLine(item, line, response.image_width, out float distance)) continue;
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestLine = line;
+                }
+            }
+
+            if (bestLine == null)
+            {
+                bestLine = new List<TranslationLabelItem>();
+                lineItems.Add(bestLine);
+            }
+
+            bestLine.Add(item);
+            bestLine.Sort((a, b) => a.BBox.xMin.CompareTo(b.BBox.xMin));
+        }
+
+        var result = new List<TranslationLabelGroup>();
+        foreach (List<TranslationLabelItem> line in lineItems)
+        {
+            result.Add(TranslationLabelGroup.FromItems(line, response, this, false));
+        }
+
+        result.Sort((a, b) =>
+        {
+            int yCompare = a.BBox.yMin.CompareTo(b.BBox.yMin);
+            return yCompare != 0 ? yCompare : a.BBox.xMin.CompareTo(b.BBox.xMin);
+        });
+        return result;
+    }
+
+    private List<TranslationLabelItem> FlattenGroupsToItems(List<TranslationLabelGroup> groups)
+    {
+        var items = new List<TranslationLabelItem>();
+        foreach (TranslationLabelGroup group in groups)
+        {
+            items.Add(new TranslationLabelItem
+            {
+                Text = group.Text,
+                BBox = group.BBox,
+                ImagePoint = group.ImagePoint,
+                ScreenPoint = group.ScreenPoint,
+                ScreenSize = group.ScreenSize,
+                LineCount = group.LineCount
+            });
+        }
+        return items;
+    }
+
+    private static bool CanJoinSameLine(
+        TranslationLabelItem item,
+        List<TranslationLabelItem> line,
+        int imageWidth,
+        out float centerDistance
+    )
+    {
+        centerDistance = float.MaxValue;
+        if (line == null || line.Count == 0) return false;
+
+        Rect union = line[0].BBox;
+        for (int i = 1; i < line.Count; i++)
+        {
+            union = UnionRect(union, line[i].BBox);
+        }
+
+        float minBottom = Mathf.Max(union.yMin, item.BBox.yMin);
+        float maxTop = Mathf.Min(union.yMax, item.BBox.yMax);
+        float overlap = Mathf.Max(0f, maxTop - minBottom);
+        float minHeight = Mathf.Max(1f, Mathf.Min(union.height, item.BBox.height));
+        bool verticalOverlap = overlap / minHeight >= 0.45f;
+
+        centerDistance = Mathf.Abs(union.center.y - item.BBox.center.y);
+        bool centerAligned = centerDistance <= Mathf.Max(union.height, item.BBox.height) * 0.62f;
+
+        float horizontalGap = 0f;
+        if (item.BBox.xMin > union.xMax)
+        {
+            horizontalGap = item.BBox.xMin - union.xMax;
+        }
+        else if (union.xMin > item.BBox.xMax)
+        {
+            horizontalGap = union.xMin - item.BBox.xMax;
+        }
+
+        float maxHorizontalGap = Mathf.Max(imageWidth * 0.035f, Mathf.Max(union.height, item.BBox.height) * 3.2f);
+        return (verticalOverlap || centerAligned) && horizontalGap <= maxHorizontalGap;
     }
 
     private static bool CanJoinGroup(TranslationLabelItem item, List<TranslationLabelItem> group, float maxGap)
@@ -404,7 +520,7 @@ public class ARLabelPlacer : MonoBehaviour
         Canvas canvas = EnsureScreenOverlayCanvas();
         if (canvas == null) return false;
 
-        GameObject panel = new GameObject("LensTranslationOverlay");
+        GameObject panel = new GameObject("LensLineTranslationOverlay");
         panel.transform.SetParent(canvas.transform, false);
         screenOverlayLabels.Add(panel);
 
@@ -412,11 +528,12 @@ public class ARLabelPlacer : MonoBehaviour
         rect.anchorMin = new Vector2(0f, 0f);
         rect.anchorMax = new Vector2(0f, 0f);
         rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.anchoredPosition = group.ScreenPoint;
-        rect.sizeDelta = ResolveScreenOverlaySize(group);
+        Vector2 overlaySize = ResolveScreenOverlaySize(group);
+        rect.sizeDelta = overlaySize;
+        rect.anchoredPosition = ClampOverlayCenterToScreen(group.ScreenPoint, overlaySize);
 
         Image background = panel.AddComponent<Image>();
-        background.color = new Color(0.92f, 0.92f, 0.88f, 0.72f);
+        background.color = lensOverlayBackgroundColor;
         background.raycastTarget = false;
 
         GameObject textObject = new GameObject("TranslatedText");
@@ -424,14 +541,14 @@ public class ARLabelPlacer : MonoBehaviour
         RectTransform textRect = textObject.AddComponent<RectTransform>();
         textRect.anchorMin = Vector2.zero;
         textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = new Vector2(3f, 2f);
-        textRect.offsetMax = new Vector2(-3f, -2f);
+        textRect.offsetMin = ResolveOverlayTextPadding(overlaySize);
+        textRect.offsetMax = -ResolveOverlayTextPadding(overlaySize);
 
         TextMeshProUGUI text = textObject.AddComponent<TextMeshProUGUI>();
         text.text = Ellipsize(group.Text, maxLabelCharacters);
-        text.color = new Color(0.12f, 0.13f, 0.15f, 0.96f);
+        text.color = lensOverlayTextColor;
         text.enableWordWrapping = true;
-        text.overflowMode = TextOverflowModes.Ellipsis;
+        text.overflowMode = TextOverflowModes.Truncate;
         text.enableAutoSizing = true;
         text.fontSizeMax = ResolveScreenOverlayFontSize(group);
         text.fontSizeMin = Mathf.Min(5f, text.fontSizeMax);
@@ -462,18 +579,57 @@ public class ARLabelPlacer : MonoBehaviour
     private Vector2 ResolveScreenOverlaySize(TranslationLabelGroup group)
     {
         Vector2 size = group.ScreenSize;
+        int lineCount = ResolveOverlayLineCount(group);
 
-        float width = Mathf.Clamp(size.x * 1.04f, 42f, Screen.width * 0.94f);
-        float height = Mathf.Clamp(size.y * 1.06f, 28f, Screen.height * 0.82f);
+        float width = Mathf.Clamp(size.x * lensOverlayWidthExpansion, 64f, Screen.width * 0.96f);
+        float expectedTextHeight = ResolveScreenOverlayFontSize(group) * 1.18f * lineCount + 8f;
+        float height = Mathf.Clamp(
+            Mathf.Max(size.y * lensOverlayHeightExpansion, expectedTextHeight),
+            18f,
+            Mathf.Min(96f, Screen.height * 0.16f)
+        );
 
         return new Vector2(width, height);
     }
 
     private float ResolveScreenOverlayFontSize(TranslationLabelGroup group)
     {
-        int lineCount = Mathf.Max(1, group.LineCount);
-        float lineHeight = group.ScreenSize.y / lineCount;
-        return Mathf.Clamp(lineHeight * 0.78f, 5f, 24f);
+        int lineCount = ResolveOverlayLineCount(group);
+        float lineHeight = group.ScreenSize.y / Mathf.Max(1, group.LineCount);
+        float sizeByHeight = lineHeight * 0.82f;
+        float sizeByWidth = group.ScreenSize.x / Mathf.Max(8f, group.Text.Length * 0.55f);
+        float fittedSize = lineCount > 1 ? Mathf.Min(sizeByHeight * 0.92f, sizeByWidth * 1.15f) : Mathf.Min(sizeByHeight, sizeByWidth * 1.25f);
+        return Mathf.Clamp(fittedSize, 7f, 24f);
+    }
+
+    private int ResolveOverlayLineCount(TranslationLabelGroup group)
+    {
+        if (group == null || string.IsNullOrWhiteSpace(group.Text)) return 1;
+
+        int explicitLines = Mathf.Max(1, group.LineCount);
+        float availableWidth = Mathf.Max(1f, group.ScreenSize.x * lensOverlayWidthExpansion);
+        float fontSize = Mathf.Clamp(group.ScreenSize.y * 0.80f, 6f, 28f);
+        float approximateTextWidth = group.Text.Length * fontSize * 0.48f;
+        int wrappedLines = Mathf.CeilToInt(approximateTextWidth / availableWidth);
+        return Mathf.Clamp(Mathf.Max(explicitLines, wrappedLines), 1, Mathf.Max(1, lensOverlayMaxLines));
+    }
+
+    private Vector2 ResolveOverlayTextPadding(Vector2 overlaySize)
+    {
+        return new Vector2(
+            Mathf.Clamp(overlaySize.x * 0.025f, 2f, 8f),
+            Mathf.Clamp(overlaySize.y * 0.08f, 1f, 5f)
+        );
+    }
+
+    private Vector2 ClampOverlayCenterToScreen(Vector2 center, Vector2 size)
+    {
+        float halfWidth = size.x * 0.5f;
+        float halfHeight = size.y * 0.5f;
+        return new Vector2(
+            Mathf.Clamp(center.x, halfWidth, Mathf.Max(halfWidth, Screen.width - halfWidth)),
+            Mathf.Clamp(center.y, halfHeight, Mathf.Max(halfHeight, Screen.height - halfHeight))
+        );
     }
 
     /// <summary>
@@ -791,7 +947,12 @@ public class ARLabelPlacer : MonoBehaviour
         public Vector2 ScreenSize;
         public int LineCount;
 
-        public static TranslationLabelGroup FromItems(List<TranslationLabelItem> items, PipelineResponse response, ARLabelPlacer placer)
+        public static TranslationLabelGroup FromItems(
+            List<TranslationLabelItem> items,
+            PipelineResponse response,
+            ARLabelPlacer placer,
+            bool preserveLineBreaks
+        )
         {
             Rect union = items[0].BBox;
             var lines = new List<string>();
@@ -806,7 +967,7 @@ public class ARLabelPlacer : MonoBehaviour
             }
 
             Vector2 imagePoint = union.center;
-            string text = string.Join("\n", lines);
+            string text = preserveLineBreaks ? string.Join("\n", lines) : string.Join(" ", lines);
             return new TranslationLabelGroup
             {
                 Text = text,
@@ -814,7 +975,7 @@ public class ARLabelPlacer : MonoBehaviour
                 ImagePoint = imagePoint,
                 ScreenPoint = placer.ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height),
                 ScreenSize = ImageRectToScreenSize(union, response.image_width, response.image_height),
-                LineCount = Mathf.Max(1, lines.Count)
+                LineCount = preserveLineBreaks ? Mathf.Max(1, lines.Count) : 1
             };
         }
     }
