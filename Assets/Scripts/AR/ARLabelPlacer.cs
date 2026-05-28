@@ -26,7 +26,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
     [SerializeField] private bool groupNearbyTextBlocks = true;
-    [SerializeField] private bool googleLensSingleOverlay = false;
+    [SerializeField] private bool googleLensSingleOverlay = true;
     [SerializeField] private bool useScreenSpaceTranslationOverlay = true;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.16f;
 
@@ -462,10 +462,9 @@ public class ARLabelPlacer : MonoBehaviour
     private Vector2 ResolveScreenOverlaySize(TranslationLabelGroup group)
     {
         Vector2 size = group.ScreenSize;
-        int lineCount = Mathf.Max(1, group.LineCount);
 
-        float width = Mathf.Clamp(size.x * 1.05f, 42f, Screen.width * 0.94f);
-        float height = Mathf.Clamp(size.y * 1.12f, 18f * lineCount, Screen.height * 0.82f);
+        float width = Mathf.Clamp(size.x * 1.04f, 42f, Screen.width * 0.94f);
+        float height = Mathf.Clamp(size.y * 1.06f, 28f, Screen.height * 0.82f);
 
         return new Vector2(width, height);
     }
