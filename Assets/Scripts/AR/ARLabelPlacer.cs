@@ -26,8 +26,8 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
     [SerializeField] private bool groupNearbyTextBlocks = true;
-    [SerializeField] private bool googleLensSingleOverlay = true;
-    [SerializeField] private float groupMaxVerticalGapRatio = 0.09f;
+    [SerializeField] private bool googleLensSingleOverlay = false;
+    [SerializeField] private float groupMaxVerticalGapRatio = 0.16f;
 
     // Quản lý nhiều label cùng lúc
     private List<GameObject> fixedLabels = new List<GameObject>();
@@ -146,7 +146,7 @@ public class ARLabelPlacer : MonoBehaviour
             // Path A: SurfaceMapper (homography)
             if (surfaceMapper != null && surfaceMapper.TryMapImagePointToPose(resolvedImagePoint, out Pose surfacePose))
             {
-                labelPlaced = CreateFixedLabel(text, surfacePose);
+                labelPlaced = CreateFixedLabel(text, surfacePose, group.ScreenSize);
                 if (labelPlaced) RegisterPlacedLabel(resolvedScreenPoint, text);
             }
 
@@ -173,7 +173,7 @@ public class ARLabelPlacer : MonoBehaviour
                                  forward * groupIndex * 0.04f;
 
                 Pose offsetPose = new Pose(basePose.position + offset, basePose.rotation);
-                labelPlaced = CreateFixedLabel(text, offsetPose);
+                labelPlaced = CreateFixedLabel(text, offsetPose, group.ScreenSize);
                 if (labelPlaced)
                 {
                     RegisterPlacedLabel(resolvedScreenPoint, text);
@@ -267,7 +267,8 @@ public class ARLabelPlacer : MonoBehaviour
                 Text = text.Trim(),
                 BBox = bbox,
                 ImagePoint = imagePoint,
-                ScreenPoint = ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height)
+                ScreenPoint = ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height),
+                ScreenSize = ImageRectToScreenSize(bbox, response.image_width, response.image_height)
             });
         }
 
@@ -363,6 +364,19 @@ public class ARLabelPlacer : MonoBehaviour
             Mathf.Min(a.yMin, b.yMin),
             Mathf.Max(a.xMax, b.xMax),
             Mathf.Max(a.yMax, b.yMax)
+        );
+    }
+
+    private static Vector2 ImageRectToScreenSize(Rect imageRect, int imageWidth, int imageHeight)
+    {
+        if (imageWidth <= 0 || imageHeight <= 0)
+        {
+            return new Vector2(320f, 120f);
+        }
+
+        return new Vector2(
+            Mathf.Max(72f, imageRect.width / imageWidth * Screen.width),
+            Mathf.Max(36f, imageRect.height / imageHeight * Screen.height)
         );
     }
 
@@ -477,6 +491,11 @@ public class ARLabelPlacer : MonoBehaviour
 
     private bool CreateFixedLabel(string translatedText, Pose hitPose)
     {
+        return CreateFixedLabel(translatedText, hitPose, Vector2.zero);
+    }
+
+    private bool CreateFixedLabel(string translatedText, Pose hitPose, Vector2 targetScreenSize)
+    {
         ARAnchor anchor = anchorPlacer.PlaceAnchor(hitPose);
         if (anchor == null) return false;
 
@@ -492,7 +511,7 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         ARLectureVisualPolish.StyleLabel(label);
-        FitLabelPanel(label, textComp);
+        FitLabelPanel(label, textComp, targetScreenSize);
         fixedLabels.Add(label);
         return true;
     }
@@ -563,19 +582,37 @@ public class ARLabelPlacer : MonoBehaviour
         label.transform.localScale = Vector3.one * scale;
     }
 
-    private void FitLabelPanel(GameObject label, TextMeshProUGUI textComp)
+    private void FitLabelPanel(GameObject label, TextMeshProUGUI textComp, Vector2 targetScreenSize)
     {
         if (label == null || textComp == null) return;
 
         int length = textComp.text == null ? 0 : textComp.text.Length;
         int lines = EstimateLineCount(textComp.text);
-        float width = Mathf.Clamp(260f + length * 2.2f, 320f, 760f);
-        float height = Mathf.Clamp(92f + lines * 34f, 112f, 620f);
+        bool hasTargetSize = targetScreenSize.x > 0f && targetScreenSize.y > 0f;
+        float width = hasTargetSize
+            ? Mathf.Clamp(targetScreenSize.x * 1.06f, 48f, 620f)
+            : Mathf.Clamp(180f + length * 1.8f, 180f, 560f);
+        float height = hasTargetSize
+            ? Mathf.Clamp(targetScreenSize.y * 1.16f, 24f, 360f)
+            : Mathf.Clamp(48f + lines * 26f, 56f, 320f);
+
+        float fontMax = Mathf.Clamp((height - 6f) / Mathf.Max(1, lines) * 0.78f, 6f, 22f);
+        textComp.fontSizeMax = fontMax;
+        textComp.fontSizeMin = Mathf.Min(6f, fontMax);
 
         RectTransform textRect = textComp.GetComponent<RectTransform>();
         if (textRect != null)
         {
-            textRect.sizeDelta = new Vector2(Mathf.Max(textRect.sizeDelta.x, width - 44f), Mathf.Max(textRect.sizeDelta.y, height - 32f));
+            textRect.sizeDelta = new Vector2(Mathf.Max(1f, width - 12f), Mathf.Max(1f, height - 8f));
+        }
+
+        foreach (Canvas canvas in label.GetComponentsInChildren<Canvas>(true))
+        {
+            RectTransform canvasRect = canvas.GetComponent<RectTransform>();
+            if (canvasRect != null)
+            {
+                canvasRect.sizeDelta = new Vector2(width, height);
+            }
         }
 
         foreach (Image image in label.GetComponentsInChildren<Image>(true))
@@ -583,7 +620,9 @@ public class ARLabelPlacer : MonoBehaviour
             RectTransform imageRect = image.GetComponent<RectTransform>();
             if (imageRect != null && imageRect.name.ToLowerInvariant().Contains("background"))
             {
-                imageRect.sizeDelta = new Vector2(width, height);
+                imageRect.offsetMin = Vector2.zero;
+                imageRect.offsetMax = Vector2.zero;
+                imageRect.sizeDelta = Vector2.zero;
             }
         }
     }
@@ -633,6 +672,7 @@ public class ARLabelPlacer : MonoBehaviour
         public Rect BBox;
         public Vector2 ImagePoint;
         public Vector2 ScreenPoint;
+        public Vector2 ScreenSize;
     }
 
     private sealed class TranslationLabelGroup
@@ -641,6 +681,7 @@ public class ARLabelPlacer : MonoBehaviour
         public Rect BBox;
         public Vector2 ImagePoint;
         public Vector2 ScreenPoint;
+        public Vector2 ScreenSize;
 
         public static TranslationLabelGroup FromItems(List<TranslationLabelItem> items, PipelineResponse response, ARLabelPlacer placer)
         {
@@ -662,7 +703,8 @@ public class ARLabelPlacer : MonoBehaviour
                 Text = string.Join("\n", lines),
                 BBox = union,
                 ImagePoint = imagePoint,
-                ScreenPoint = placer.ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height)
+                ScreenPoint = placer.ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height),
+                ScreenSize = ImageRectToScreenSize(union, response.image_width, response.image_height)
             };
         }
     }
