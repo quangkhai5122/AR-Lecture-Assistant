@@ -26,6 +26,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
     [SerializeField] private bool groupNearbyTextBlocks = true;
+    [SerializeField] private bool googleLensSingleOverlay = true;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.09f;
 
     // Quản lý nhiều label cùng lúc
@@ -284,6 +285,14 @@ public class ARLabelPlacer : MonoBehaviour
                 singleGroups.Add(TranslationLabelGroup.FromItems(new List<TranslationLabelItem> { item }, response, this));
             }
             return singleGroups;
+        }
+
+        if (googleLensSingleOverlay)
+        {
+            return new List<TranslationLabelGroup>
+            {
+                TranslationLabelGroup.FromItems(items, response, this)
+            };
         }
 
         var groups = new List<List<TranslationLabelItem>>();
@@ -560,8 +569,8 @@ public class ARLabelPlacer : MonoBehaviour
 
         int length = textComp.text == null ? 0 : textComp.text.Length;
         int lines = EstimateLineCount(textComp.text);
-        float width = Mathf.Clamp(260f + length * 2.2f, 300f, 620f);
-        float height = Mathf.Clamp(92f + lines * 34f, 112f, 420f);
+        float width = Mathf.Clamp(260f + length * 2.2f, 320f, 760f);
+        float height = Mathf.Clamp(92f + lines * 34f, 112f, 620f);
 
         RectTransform textRect = textComp.GetComponent<RectTransform>();
         if (textRect != null)
