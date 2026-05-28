@@ -46,6 +46,60 @@ public class TranslateTextItem
 }
 
 [Serializable]
+public class SpeechTranscribeResponse
+{
+    public string transcript;
+    public string language_code;
+    public float confidence;
+    public SpeechProvider provider;
+    public bool mock_used;
+    public string[] warnings;
+}
+
+[Serializable]
+public class SpeechTranslateTextResponse
+{
+    public string source_text;
+    public string translated_text;
+    public string source_language;
+    public string target_language;
+    public SpeechProvider provider;
+    public string model;
+    public bool mock_used;
+    public string[] warnings;
+}
+
+[Serializable]
+public class SpeechSummaryResponse
+{
+    public string summary_text;
+    public string target_language;
+    public SpeechProvider provider;
+    public string model;
+    public bool mock_used;
+    public string[] warnings;
+}
+
+[Serializable]
+public class SpeechStreamMessage
+{
+    public string type;
+    public string transcript;
+    public bool is_final;
+    public float confidence;
+    public float stability;
+    public string provider;
+    public string error;
+}
+
+[Serializable]
+public class SpeechProvider
+{
+    public string speech;
+    public string llm;
+}
+
+[Serializable]
 public class BackendHealthResponse
 {
     public string status;

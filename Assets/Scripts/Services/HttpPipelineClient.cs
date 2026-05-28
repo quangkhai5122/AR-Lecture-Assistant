@@ -18,6 +18,10 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
     public string pipelineAliasPath = "/pipeline";
     public string ocrPath = "/ocr";
     public string translatePath = "/translate";
+    public string speechTranscribePath = "/speech/transcribe";
+    public string speechTranslateTextPath = "/speech/translate-text";
+    public string speechStreamPath = "/speech/stream";
+    public string speechSummaryPath = "/speech/summarize";
     public string healthPath = "/health";
     public int timeoutSeconds = 20;
 
@@ -120,6 +124,86 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
         }
 
         return response;
+    }
+
+    public async Task<SpeechTranscribeResponse> SendSpeechTranscribeAsync(
+        string audioBase64,
+        string audioEncoding,
+        int sampleRateHz,
+        string languageCode,
+        bool mock,
+        string speechProvider = ""
+    )
+    {
+        string json = await SendJsonAsync(
+            BuildUrl(speechTranscribePath),
+            BuildSpeechTranscribeJson(audioBase64, audioEncoding, sampleRateHz, languageCode, mock, speechProvider)
+        );
+        SpeechTranscribeResponse response = JsonUtility.FromJson<SpeechTranscribeResponse>(json);
+        if (response == null)
+        {
+            throw new Exception("Cannot parse backend speech transcript JSON.");
+        }
+
+        return response;
+    }
+
+    public async Task<SpeechTranslateTextResponse> SendSpeechTranslateTextAsync(
+        string text,
+        string sourceLanguage,
+        string targetLanguage,
+        List<string> context,
+        bool mock,
+        string llmProvider = ""
+    )
+    {
+        string json = await SendJsonAsync(
+            BuildUrl(speechTranslateTextPath),
+            BuildSpeechTranslateTextJson(text, sourceLanguage, targetLanguage, context, mock, llmProvider)
+        );
+        SpeechTranslateTextResponse response = JsonUtility.FromJson<SpeechTranslateTextResponse>(json);
+        if (response == null)
+        {
+            throw new Exception("Cannot parse backend speech translation JSON.");
+        }
+
+        return response;
+    }
+
+    public async Task<SpeechSummaryResponse> SendSpeechSummaryAsync(
+        string text,
+        string targetLanguage,
+        bool mock,
+        string llmProvider = ""
+    )
+    {
+        string json = await SendJsonAsync(
+            BuildUrl(speechSummaryPath),
+            BuildSpeechSummaryJson(text, targetLanguage, mock, llmProvider)
+        );
+        SpeechSummaryResponse response = JsonUtility.FromJson<SpeechSummaryResponse>(json);
+        if (response == null)
+        {
+            throw new Exception("Cannot parse backend speech summary JSON.");
+        }
+
+        return response;
+    }
+
+    public Uri BuildSpeechStreamUri()
+    {
+        string url = BuildUrl(speechStreamPath);
+        if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return new Uri("wss://" + url.Substring("https://".Length));
+        }
+
+        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            return new Uri("ws://" + url.Substring("http://".Length));
+        }
+
+        return new Uri(url);
     }
 
     public PipelineResponse ComposePipelineResponse(
@@ -267,6 +351,81 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
         if (!string.IsNullOrWhiteSpace(translationProvider))
         {
             builder.AppendFormat(",\"translation_provider\":\"{0}\"", EscapeJsonString(translationProvider));
+        }
+        builder.Append("}");
+        return builder.ToString();
+    }
+
+    private string BuildSpeechTranscribeJson(
+        string audioBase64,
+        string audioEncoding,
+        int sampleRateHz,
+        string languageCode,
+        bool mock,
+        string speechProvider
+    )
+    {
+        var builder = new StringBuilder();
+        builder.Append("{");
+        builder.AppendFormat("\"audio_base64\":\"{0}\",", EscapeJsonString(audioBase64 ?? ""));
+        builder.AppendFormat("\"audio_encoding\":\"{0}\",", EscapeJsonString(string.IsNullOrWhiteSpace(audioEncoding) ? "LINEAR16" : audioEncoding));
+        builder.AppendFormat("\"sample_rate_hz\":{0},", Mathf.Max(1, sampleRateHz));
+        builder.AppendFormat("\"language_code\":\"{0}\",", EscapeJsonString(string.IsNullOrWhiteSpace(languageCode) ? "en-US" : languageCode));
+        builder.AppendFormat("\"mock\":{0}", mock ? "true" : "false");
+        if (!string.IsNullOrWhiteSpace(speechProvider))
+        {
+            builder.AppendFormat(",\"speech_provider\":\"{0}\"", EscapeJsonString(speechProvider));
+        }
+        builder.Append("}");
+        return builder.ToString();
+    }
+
+    private string BuildSpeechTranslateTextJson(
+        string text,
+        string sourceLanguage,
+        string targetLanguage,
+        List<string> context,
+        bool mock,
+        string llmProvider
+    )
+    {
+        var builder = new StringBuilder();
+        builder.Append("{");
+        builder.AppendFormat("\"text\":\"{0}\",", EscapeJsonString(text ?? ""));
+        builder.AppendFormat("\"source_language\":\"{0}\",", EscapeJsonString(string.IsNullOrWhiteSpace(sourceLanguage) ? "en-US" : sourceLanguage));
+        builder.AppendFormat("\"target_language\":\"{0}\",", EscapeJsonString(string.IsNullOrWhiteSpace(targetLanguage) ? "vi" : targetLanguage));
+        builder.AppendFormat("\"mock\":{0},", mock ? "true" : "false");
+        builder.Append("\"context\":[");
+        List<string> safeContext = context ?? new List<string>();
+        for (int i = 0; i < safeContext.Count; i++)
+        {
+            if (i > 0) builder.Append(",");
+            builder.AppendFormat("\"{0}\"", EscapeJsonString(safeContext[i] ?? ""));
+        }
+        builder.Append("]");
+        if (!string.IsNullOrWhiteSpace(llmProvider))
+        {
+            builder.AppendFormat(",\"llm_provider\":\"{0}\"", EscapeJsonString(llmProvider));
+        }
+        builder.Append("}");
+        return builder.ToString();
+    }
+
+    private string BuildSpeechSummaryJson(
+        string text,
+        string targetLanguage,
+        bool mock,
+        string llmProvider
+    )
+    {
+        var builder = new StringBuilder();
+        builder.Append("{");
+        builder.AppendFormat("\"text\":\"{0}\",", EscapeJsonString(text ?? ""));
+        builder.AppendFormat("\"target_language\":\"{0}\",", EscapeJsonString(string.IsNullOrWhiteSpace(targetLanguage) ? "vi" : targetLanguage));
+        builder.AppendFormat("\"mock\":{0}", mock ? "true" : "false");
+        if (!string.IsNullOrWhiteSpace(llmProvider))
+        {
+            builder.AppendFormat(",\"llm_provider\":\"{0}\"", EscapeJsonString(llmProvider));
         }
         builder.Append("}");
         return builder.ToString();

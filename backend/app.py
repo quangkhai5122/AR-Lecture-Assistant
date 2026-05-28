@@ -5,10 +5,13 @@ from typing import Any
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from flask_sock import Sock
 from werkzeug.exceptions import BadRequest, HTTPException
 
 from services.errors import PipelineError
+from services.gemini_service import GeminiService
 from services.pipeline_service import PipelineService
+from services.speech_service import SpeechToTextService
 
 
 def _load_local_env() -> None:
@@ -33,8 +36,15 @@ _load_local_env()
 
 app = Flask(__name__)
 CORS(app)
+sock = Sock(app)
 
 pipeline_service = PipelineService()
+speech_service = SpeechToTextService()
+gemini_service = GeminiService()
+
+@sock.route("/speech/stream")
+def speech_stream(ws):
+    speech_service.stream_websocket(ws)
 
 
 @app.errorhandler(PipelineError)
@@ -85,6 +95,8 @@ def health():
         "provider": {
             "ocr": os.getenv("OCR_PROVIDER", "tesseract"),
             "translation": os.getenv("TRANSLATION_PROVIDER", "mock"),
+            "speech": os.getenv("SPEECH_PROVIDER", "google"),
+            "llm": os.getenv("LLM_PROVIDER", "gemini"),
         },
     })
 
@@ -163,6 +175,113 @@ def translate_only():
         "warnings": result.warnings,
     })
 
+@app.post("/speech/transcribe")
+def speech_transcribe():
+    payload = _json_payload()
+    _validate_speech_audio_payload(payload)
+
+    result = speech_service.recognize(
+        audio_base64=payload.get("audio_base64", ""),
+        audio_encoding=payload.get("audio_encoding", "LINEAR16"),
+        sample_rate_hz=int(payload.get("sample_rate_hz", 16000)),
+        language_code=payload.get("language_code", "en-US"),
+        force_mock=bool(payload.get("mock", False)),
+        provider=payload.get("speech_provider"),
+    )
+
+    return jsonify({
+        "transcript": result.transcript,
+        "language_code": payload.get("language_code", "en-US"),
+        "confidence": result.confidence,
+        "provider": {"speech": result.provider},
+        "mock_used": result.mock_used,
+        "warnings": result.warnings or [],
+    })
+
+@app.post("/speech/translate-text")
+def speech_translate_text():
+    payload = _json_payload()
+    _validate_speech_text_payload(payload)
+
+    result = gemini_service.translate_sentence(
+        text=payload.get("text", ""),
+        source_language=payload.get("source_language", "en-US"),
+        target_language=payload.get("target_language", "vi"),
+        context=payload.get("context", []),
+        force_mock=bool(payload.get("mock", False)),
+        provider=payload.get("llm_provider"),
+    )
+
+    return jsonify({
+        "source_text": payload.get("text", ""),
+        "translated_text": result.text,
+        "source_language": payload.get("source_language", "en-US"),
+        "target_language": payload.get("target_language", "vi"),
+        "provider": {"llm": result.provider},
+        "model": result.model,
+        "mock_used": result.mock_used,
+        "warnings": result.warnings,
+    })
+
+@app.post("/speech/translate")
+def speech_translate_audio():
+    payload = _json_payload()
+    _validate_speech_audio_payload(payload)
+
+    speech_result = speech_service.recognize(
+        audio_base64=payload.get("audio_base64", ""),
+        audio_encoding=payload.get("audio_encoding", "LINEAR16"),
+        sample_rate_hz=int(payload.get("sample_rate_hz", 16000)),
+        language_code=payload.get("language_code", "en-US"),
+        force_mock=bool(payload.get("mock", False)),
+        provider=payload.get("speech_provider"),
+    )
+
+    translation_result = gemini_service.translate_sentence(
+        text=speech_result.transcript,
+        source_language=payload.get("language_code", "en-US"),
+        target_language=payload.get("target_language", "vi"),
+        context=payload.get("context", []),
+        force_mock=bool(payload.get("mock", False)),
+        provider=payload.get("llm_provider"),
+    )
+
+    return jsonify({
+        "transcript": speech_result.transcript,
+        "translated_text": translation_result.text,
+        "source_language": payload.get("language_code", "en-US"),
+        "target_language": payload.get("target_language", "vi"),
+        "confidence": speech_result.confidence,
+        "provider": {
+            "speech": speech_result.provider,
+            "llm": translation_result.provider,
+        },
+        "model": translation_result.model,
+        "mock_used": speech_result.mock_used or translation_result.mock_used,
+        "warnings": (speech_result.warnings or []) + translation_result.warnings,
+    })
+
+@app.post("/speech/summarize")
+def speech_summarize():
+    payload = _json_payload()
+    _validate_summary_payload(payload)
+
+    result = gemini_service.summarize_notes(
+        text=payload.get("text", ""),
+        target_language=payload.get("target_language", "vi"),
+        force_mock=bool(payload.get("mock", False)),
+        provider=payload.get("llm_provider"),
+    )
+
+    return jsonify({
+        "summary_text": result.text,
+        "target_language": payload.get("target_language", "vi"),
+        "provider": {"llm": result.provider},
+        "model": result.model,
+        "mock_used": result.mock_used,
+        "warnings": result.warnings,
+    })
+
 
 def _json_payload() -> dict[str, Any]:
     payload = request.get_json(silent=False)
@@ -199,6 +318,56 @@ def _validate_translate_payload(payload: dict[str, Any]) -> None:
             raise PipelineError(f"Field 'texts[{index}]' must be a string or object.")
         if not isinstance(item.get("text"), str):
             raise PipelineError(f"Field 'texts[{index}].text' must be a string.")
+
+def _validate_speech_audio_payload(payload: dict[str, Any]) -> None:
+    if "mock" in payload and not isinstance(payload["mock"], bool):
+        raise PipelineError("Field 'mock' must be a boolean.")
+    if not bool(payload.get("mock", False)):
+        _require_string(payload, "audio_base64")
+    elif "audio_base64" in payload and not isinstance(payload["audio_base64"], str):
+        raise PipelineError("Field 'audio_base64' must be a string.")
+
+    for key in ("audio_encoding", "language_code", "target_language"):
+        if key in payload and not isinstance(payload[key], str):
+            raise PipelineError(f"Field '{key}' must be a string.")
+
+    sample_rate = payload.get("sample_rate_hz", 16000)
+    if not isinstance(sample_rate, int) or isinstance(sample_rate, bool) or sample_rate <= 0:
+        raise PipelineError("Field 'sample_rate_hz' must be a positive integer.")
+
+    _validate_context(payload)
+    if payload.get("speech_provider"):
+        _require_string(payload, "speech_provider")
+    if payload.get("llm_provider"):
+        _require_string(payload, "llm_provider")
+
+def _validate_speech_text_payload(payload: dict[str, Any]) -> None:
+    _require_string(payload, "text")
+    if "mock" in payload and not isinstance(payload["mock"], bool):
+        raise PipelineError("Field 'mock' must be a boolean.")
+    for key in ("source_language", "target_language"):
+        if key in payload and not isinstance(payload[key], str):
+            raise PipelineError(f"Field '{key}' must be a string.")
+    _validate_context(payload)
+    if payload.get("llm_provider"):
+        _require_string(payload, "llm_provider")
+
+def _validate_summary_payload(payload: dict[str, Any]) -> None:
+    _require_string(payload, "text")
+    if "mock" in payload and not isinstance(payload["mock"], bool):
+        raise PipelineError("Field 'mock' must be a boolean.")
+    if "target_language" in payload and not isinstance(payload["target_language"], str):
+        raise PipelineError("Field 'target_language' must be a string.")
+    if payload.get("llm_provider"):
+        _require_string(payload, "llm_provider")
+
+def _validate_context(payload: dict[str, Any]) -> None:
+    context = payload.get("context", [])
+    if not isinstance(context, list):
+        raise PipelineError("Field 'context' must be a list.")
+    for index, item in enumerate(context):
+        if not isinstance(item, str):
+            raise PipelineError(f"Field 'context[{index}]' must be a string.")
 
 
 def _validate_common_payload(payload: dict[str, Any]) -> None:

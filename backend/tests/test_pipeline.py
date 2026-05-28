@@ -386,3 +386,101 @@ def test_translate_endpoint_validates_texts_shape():
     client = app.test_client()
     response = client.post("/translate", json={"target_language": "vi", "texts": {"bad": "shape"}})
     assert response.status_code == 400
+
+def test_speech_transcribe_endpoint_mock_returns_transcript():
+    client = app.test_client()
+    response = client.post("/speech/transcribe", json={
+        "mock": True,
+        "language_code": "en-US",
+        "sample_rate_hz": 16000,
+    })
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["transcript"]
+    assert data["provider"] == {"speech": "mock"}
+    assert data["mock_used"] is True
+
+def test_speech_translate_text_endpoint_mock_returns_translation():
+    client = app.test_client()
+    response = client.post("/speech/translate-text", json={
+        "mock": True,
+        "text": "Today we will learn about neural networks.",
+        "source_language": "en-US",
+        "target_language": "vi",
+        "context": ["We are studying machine learning."],
+    })
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["source_text"] == "Today we will learn about neural networks."
+    assert data["translated_text"]
+    assert data["provider"] == {"llm": "mock"}
+    assert data["mock_used"] is True
+
+def test_speech_translate_audio_endpoint_mock_runs_full_flow():
+    client = app.test_client()
+    response = client.post("/speech/translate", json={
+        "mock": True,
+        "language_code": "en-US",
+        "target_language": "vi",
+        "context": [],
+    })
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["transcript"]
+    assert data["translated_text"]
+    assert data["provider"] == {"speech": "mock", "llm": "mock"}
+    assert data["mock_used"] is True
+
+def test_speech_summarize_endpoint_mock_returns_summary():
+    client = app.test_client()
+    response = client.post("/speech/summarize", json={
+        "mock": True,
+        "text": "EN: Today we study neural networks.\nVI: Hôm nay chúng ta học mạng nơ-ron.",
+        "target_language": "vi",
+    })
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["summary_text"]
+    assert data["provider"] == {"llm": "mock"}
+    assert data["mock_used"] is True
+
+def test_speech_translate_text_gemini_provider_uses_context(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [{"text": "Hôm nay chúng ta học mạng nơ-ron."}]
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(url, params, json, timeout):
+        calls.append((url, params, json, timeout))
+        return FakeResponse()
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr("services.gemini_service.requests.post", fake_post)
+
+    client = app.test_client()
+    response = client.post("/speech/translate-text", json={
+        "mock": False,
+        "text": "Today we study neural networks.",
+        "source_language": "en-US",
+        "target_language": "vi",
+        "context": ["This is a machine learning lecture."],
+        "llm_provider": "gemini",
+    })
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["translated_text"] == "Hôm nay chúng ta học mạng nơ-ron."
+    assert data["provider"] == {"llm": "gemini"}
+    assert calls[0][1] == {"key": "test-key"}
+    assert "This is a machine learning lecture." in calls[0][2]["contents"][0]["parts"][0]["text"]
