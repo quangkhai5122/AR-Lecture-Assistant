@@ -81,7 +81,9 @@ Tạo anchor + world-space label
 
 - `MockPipelineClient.cs`: không cần backend, trả dữ liệu giả trong Unity.
 - `HttpPipelineClient.cs`: gọi backend thật.
-- Backend mặc định vẫn trả OCR/dịch mock để demo ổn định.
+- Backend real mode mặc định dùng OCR `tesseract` và dịch `mock` để demo local không cần API key.
+- Trên macOS local đã test với `brew install tesseract` và `pytesseract==0.3.13`.
+- Nếu muốn gọi OCR thật từ Unity, để `backendMockMode = false`, `ocrProvider = tesseract`, `translationProvider = mock`.
 
 ## Việc cần cải thiện sau MVP
 

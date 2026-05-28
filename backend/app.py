@@ -10,6 +10,27 @@ from werkzeug.exceptions import BadRequest, HTTPException
 from services.errors import PipelineError
 from services.pipeline_service import PipelineService
 
+
+def _load_local_env() -> None:
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.exists(env_path):
+        return
+
+    with open(env_path, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_local_env()
+
 app = Flask(__name__)
 CORS(app)
 
@@ -62,7 +83,7 @@ def health():
         "service": "ar-lecture-translator-backend",
         "mode": "mvp",
         "provider": {
-            "ocr": os.getenv("OCR_PROVIDER", "mock"),
+            "ocr": os.getenv("OCR_PROVIDER", "tesseract"),
             "translation": os.getenv("TRANSLATION_PROVIDER", "mock"),
         },
     })
@@ -166,7 +187,7 @@ def _validate_translate_payload(payload: dict[str, Any]) -> None:
     _require_string(payload, "target_language")
     if "mock" in payload and not isinstance(payload["mock"], bool):
         raise PipelineError("Field 'mock' must be a boolean.")
-    if "translation_provider" in payload:
+    if payload.get("translation_provider"):
         _require_string(payload, "translation_provider")
     texts = payload.get("texts")
     if not isinstance(texts, list):
@@ -190,9 +211,9 @@ def _validate_common_payload(payload: dict[str, Any]) -> None:
             or payload[key] <= 0
         ):
             raise PipelineError(f"Field '{key}' must be a positive integer.")
-    if "ocr_provider" in payload:
+    if payload.get("ocr_provider"):
         _require_string(payload, "ocr_provider")
-    if "translation_provider" in payload:
+    if payload.get("translation_provider"):
         _require_string(payload, "translation_provider")
 
 

@@ -9,6 +9,57 @@ MVP này là bộ khung cho hệ thống **dịch slide/bài giảng bằng AR t
 
 > Mục tiêu của MVP: chạy được end-to-end bằng mock trước. Sau đó từng thành viên thay mock bằng OCR/translation thật.
 
+## Cài Tesseract OCR local
+
+Tesseract là provider OCR thật nhẹ nhất để demo local. Trên macOS:
+
+```bash
+brew install tesseract
+python -m pip install -r backend/requirements.txt
+export OCR_PROVIDER=tesseract
+export TESSERACT_CMD=/opt/homebrew/bin/tesseract
+export OCR_MIN_CONFIDENCE=0.2
+```
+
+Test OCR thật bằng ảnh sample:
+
+```bash
+python scripts/post_sample_frame.py \
+  --image samples/slides/slide_01.png \
+  --real \
+  --ocr-provider tesseract \
+  --translation-provider google
+```
+
+## Chạy Tesseract OCR + Google Translate
+
+Backend tự đọc `backend/.env` khi khởi động. File này bị git ignore, dùng để giữ API key local:
+
+```bash
+cp backend/.env.example backend/.env
+# sửa GOOGLE_TRANSLATE_API_KEY trong backend/.env
+python backend/app.py
+```
+
+Các biến tối thiểu:
+
+```bash
+OCR_PROVIDER=tesseract
+TRANSLATION_PROVIDER=google
+GOOGLE_TRANSLATE_API_KEY=<your-google-translate-api-key>
+GOOGLE_TRANSLATE_SOURCE_LANGUAGE=en
+```
+
+Test end-to-end bằng ảnh sample:
+
+```bash
+python scripts/post_sample_frame.py \
+  --image samples/slides/slide_01.png \
+  --real \
+  --ocr-provider tesseract \
+  --translation-provider google
+```
+
 ## Cài PaddleOCR và LibreTranslate
 ```bash
 conda create -n paddleocr_gpu python=3.10 -y

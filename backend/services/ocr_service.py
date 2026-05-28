@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 
 from services.errors import PipelineError
 
@@ -32,7 +32,7 @@ class OCRService:
 
     def __init__(self):
         self._paddle_ocr: Any | None = None
-        self._paddle_signature: tuple[str, bool] | None = None
+        self._paddle_signature: tuple[Any, ...] | None = None
 
     def recognize(
         self,
@@ -63,21 +63,37 @@ class OCRService:
         if image is None:
             raise PipelineError(f"image_base64 is required for OCR_PROVIDER={resolved_provider}.")
 
-        if resolved_provider == "paddleocr":
-            blocks = self._paddleocr_blocks(image, width, height)
-        elif resolved_provider == "tesseract":
-            blocks = self._tesseract_blocks(image, width, height)
-        else:
-            raise PipelineError(f"Unsupported OCR provider: {resolved_provider}")
+        provider_used = resolved_provider
+        try:
+            blocks = self._recognize_with_provider(resolved_provider, image, width, height)
+        except PipelineError as exc:
+            fallback_provider = self._fallback_provider_for(resolved_provider, exc)
+            if fallback_provider is None:
+                raise
+
+            warnings.append(
+                f"OCR provider '{resolved_provider}' unavailable ({exc.code}); "
+                f"falling back to '{fallback_provider}'."
+            )
+            try:
+                blocks = self._recognize_with_provider(fallback_provider, image, width, height)
+            except PipelineError as fallback_exc:
+                raise PipelineError(
+                    f"OCR provider '{resolved_provider}' failed and fallback "
+                    f"'{fallback_provider}' also failed: {fallback_exc.message}",
+                    status_code=fallback_exc.status_code,
+                    code=fallback_exc.code,
+                ) from fallback_exc
+            provider_used = fallback_provider
 
         if not blocks:
-            warnings.append(f"OCR provider '{resolved_provider}' returned no text blocks.")
+            warnings.append(f"OCR provider '{provider_used}' returned no text blocks.")
 
         return OCRResult(
             blocks=blocks,
             image_width=width,
             image_height=height,
-            provider=resolved_provider,
+            provider=provider_used,
             mock_used=False,
             warnings=warnings,
         )
@@ -86,12 +102,40 @@ class OCRService:
         if force_mock:
             return "mock"
 
-        selected = (provider or os.getenv("OCR_PROVIDER") or "paddleocr").strip().lower()
+        selected = (provider or os.getenv("OCR_PROVIDER") or "tesseract").strip().lower()
         if selected not in self.SUPPORTED_PROVIDERS:
             raise PipelineError(
                 f"Unsupported OCR provider '{selected}'. Expected one of: {sorted(self.SUPPORTED_PROVIDERS)}."
             )
         return selected
+
+    def _recognize_with_provider(
+        self,
+        provider: str,
+        image: Image.Image,
+        width: int,
+        height: int,
+    ) -> list[dict[str, Any]]:
+        if provider == "paddleocr":
+            return self._paddleocr_blocks(image, width, height)
+        if provider == "tesseract":
+            return self._tesseract_blocks(image, width, height)
+        raise PipelineError(f"Unsupported OCR provider: {provider}")
+
+    def _fallback_provider_for(self, provider: str, error: PipelineError) -> str | None:
+        if os.getenv("OCR_ENABLE_PROVIDER_FALLBACK", "1") != "1":
+            return None
+        if provider != "paddleocr":
+            return None
+        if error.code not in {"ocr_provider_not_available", "ocr_provider_init_failed"}:
+            return None
+
+        fallback = (os.getenv("OCR_FALLBACK_PROVIDER") or "tesseract").strip().lower()
+        if fallback == provider or fallback not in self.SUPPORTED_PROVIDERS:
+            return None
+        if fallback == "mock" and os.getenv("OCR_ALLOW_MOCK_FALLBACK", "0") != "1":
+            return None
+        return fallback
 
     def _decode_image_or_hints(
         self,
@@ -160,27 +204,45 @@ class OCRService:
 
         ocr = self._get_paddle_ocr()
         min_confidence = self._min_confidence()
+        ocr_image, scale_x, scale_y = self._prepare_ocr_image(image)
 
         try:
-            image_array = np.array(image)
+            image_array = np.array(ocr_image)
             if hasattr(ocr, "predict"):
-                raw_result = ocr.predict(
-                    image_array,
-                    use_doc_orientation_classify=False,
-                    use_doc_unwarping=False,
-                    use_textline_orientation=True,
-                )
+                predict_kwargs = {
+                    "use_doc_orientation_classify": False,
+                    "use_doc_unwarping": False,
+                    "use_textline_orientation": True,
+                    **self._paddle_detection_parameters(),
+                }
+                try:
+                    raw_result = ocr.predict(image_array, **predict_kwargs)
+                except TypeError:
+                    raw_result = ocr.predict(
+                        image_array,
+                        use_doc_orientation_classify=False,
+                        use_doc_unwarping=False,
+                        use_textline_orientation=True,
+                    )
             else:
                 raw_result = ocr.ocr(image_array)
         except Exception as exc:
             raise PipelineError(f"PaddleOCR failed: {exc}", status_code=500, code="ocr_provider_failed") from exc
 
-        return self.normalize_paddle_output(raw_result, width, height, min_confidence)
+        return self.normalize_paddle_output(
+            raw_result,
+            width,
+            height,
+            min_confidence,
+            scale_x=scale_x,
+            scale_y=scale_y,
+        )
 
     def _get_paddle_ocr(self) -> Any:
         lang = os.getenv("PADDLEOCR_LANG", "en")
         use_gpu = os.getenv("PADDLEOCR_USE_GPU", "1") == "1"
-        signature = (lang, use_gpu)
+        detection_signature = tuple(sorted(self._paddle_detection_parameters().items()))
+        signature = (lang, use_gpu, detection_signature)
         if self._paddle_ocr is not None and self._paddle_signature == signature:
             return self._paddle_ocr
 
@@ -194,35 +256,73 @@ class OCRService:
             ) from exc
 
         device = os.getenv("PADDLEOCR_DEVICE", "gpu" if use_gpu else "cpu")
-        kwargs: dict[str, Any] = {
+        modern_base_kwargs: dict[str, Any] = {
             "lang": lang,
             "use_doc_orientation_classify": False,
             "use_doc_unwarping": False,
             "use_textline_orientation": True,
             "device": device,
         }
+        legacy_base_kwargs: dict[str, Any] = {"lang": lang, "use_angle_cls": True, "use_gpu": use_gpu}
+        attempts: list[tuple[str, dict[str, Any]]] = [
+            ("modern", {**modern_base_kwargs, **self._paddle_detection_parameters()}),
+            ("modern_without_detection_tuning", modern_base_kwargs),
+            ("legacy", {**legacy_base_kwargs, **self._paddle_detection_parameters(legacy=True)}),
+            ("legacy_without_detection_tuning", legacy_base_kwargs),
+        ]
 
-        try:
-            self._paddle_ocr = PaddleOCR(**kwargs)
-        except TypeError:
-            legacy_kwargs = {"lang": lang, "use_angle_cls": True, "use_gpu": use_gpu}
+        last_type_error: TypeError | None = None
+        for attempt_name, attempt_kwargs in attempts:
             try:
-                self._paddle_ocr = PaddleOCR(**legacy_kwargs)
+                self._paddle_ocr = PaddleOCR(**attempt_kwargs)
+                self._paddle_signature = signature
+                return self._paddle_ocr
+            except TypeError as exc:
+                last_type_error = exc
             except Exception as exc:
                 raise PipelineError(
-                    f"Could not initialize PaddleOCR with lang={lang}, use_gpu={use_gpu}: {exc}",
+                    f"Could not initialize PaddleOCR ({attempt_name}) with lang={lang}, device={device}: {exc}",
                     status_code=500,
                     code="ocr_provider_init_failed",
                 ) from exc
-        except Exception as exc:
-            raise PipelineError(
-                f"Could not initialize PaddleOCR with lang={lang}, device={device}: {exc}",
-                status_code=500,
-                code="ocr_provider_init_failed",
-            ) from exc
 
-        self._paddle_signature = signature
-        return self._paddle_ocr
+        raise PipelineError(
+            f"Could not initialize PaddleOCR with supported argument sets: {last_type_error}",
+            status_code=500,
+            code="ocr_provider_init_failed",
+        )
+
+    def _paddle_detection_parameters(self, legacy: bool = False) -> dict[str, Any]:
+        limit_side_len = max(0, int(self._safe_float(os.getenv("PADDLEOCR_DET_LIMIT_SIDE_LEN"), default=960)))
+        limit_type = (os.getenv("PADDLEOCR_DET_LIMIT_TYPE", "min") or "min").strip().lower()
+        if limit_type not in {"min", "max"}:
+            limit_type = "min"
+
+        box_thresh = self._safe_float(os.getenv("PADDLEOCR_DET_BOX_THRESH"), default=0.45)
+        unclip_raw = os.getenv("PADDLEOCR_DET_UNCLIP_RATIO")
+
+        if legacy:
+            parameters: dict[str, Any] = {
+                "det_limit_type": limit_type,
+            }
+            if limit_side_len > 0:
+                parameters["det_limit_side_len"] = limit_side_len
+            if box_thresh > 0:
+                parameters["det_db_box_thresh"] = box_thresh
+            if unclip_raw:
+                parameters["det_db_unclip_ratio"] = self._safe_float(unclip_raw, default=1.5)
+            return parameters
+
+        parameters = {
+            "text_det_limit_type": limit_type,
+        }
+        if limit_side_len > 0:
+            parameters["text_det_limit_side_len"] = limit_side_len
+        if box_thresh > 0:
+            parameters["text_det_box_thresh"] = box_thresh
+        if unclip_raw:
+            parameters["text_det_unclip_ratio"] = self._safe_float(unclip_raw, default=2.0)
+        return parameters
 
     def normalize_paddle_output(
         self,
@@ -230,6 +330,8 @@ class OCRService:
         image_width: int,
         image_height: int,
         min_confidence: float | None = None,
+        scale_x: float = 1.0,
+        scale_y: float = 1.0,
     ) -> list[dict[str, Any]]:
         threshold = self._min_confidence() if min_confidence is None else min_confidence
         blocks: list[dict[str, Any]] = []
@@ -246,7 +348,13 @@ class OCRService:
             if conf < threshold:
                 continue
 
-            bbox = self._polygon_to_bbox(polygon, image_width, image_height)
+            bbox = self._polygon_to_bbox(
+                polygon,
+                image_width,
+                image_height,
+                scale_x=scale_x,
+                scale_y=scale_y,
+            )
             if bbox is None:
                 continue
 
@@ -322,13 +430,22 @@ class OCRService:
             and isinstance(text_part[0], str)
         )
 
-    def _polygon_to_bbox(self, polygon: Any, image_width: int, image_height: int) -> list[int] | None:
+    def _polygon_to_bbox(
+        self,
+        polygon: Any,
+        image_width: int,
+        image_height: int,
+        scale_x: float = 1.0,
+        scale_y: float = 1.0,
+    ) -> list[int] | None:
         points = self._polygon_points(polygon)
         if not points:
             return None
 
-        xs = [point[0] for point in points]
-        ys = [point[1] for point in points]
+        scale_x = max(0.0001, scale_x)
+        scale_y = max(0.0001, scale_y)
+        xs = [point[0] / scale_x for point in points]
+        ys = [point[1] / scale_y for point in points]
         x1 = self._clamp(round(min(xs)), 0, image_width)
         y1 = self._clamp(round(min(ys)), 0, image_height)
         x2 = self._clamp(round(max(xs)), 0, image_width)
@@ -372,8 +489,10 @@ class OCRService:
         if cmd:
             pytesseract.pytesseract.tesseract_cmd = cmd
 
+        ocr_image, scale_x, scale_y = self._prepare_ocr_image(image)
+
         try:
-            data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+            data = pytesseract.image_to_data(ocr_image, output_type=pytesseract.Output.DICT)
         except Exception as exc:
             raise PipelineError(f"Tesseract failed: {exc}", status_code=500, code="ocr_provider_failed") from exc
 
@@ -395,15 +514,15 @@ class OCRService:
             if not words:
                 continue
 
-            x1 = min(data["left"][i] for i in indices)
-            y1 = min(data["top"][i] for i in indices)
-            x2 = max(data["left"][i] + data["width"][i] for i in indices)
-            y2 = max(data["top"][i] + data["height"][i] for i in indices)
+            x1 = min(data["left"][i] for i in indices) / scale_x
+            y1 = min(data["top"][i] for i in indices) / scale_y
+            x2 = max(data["left"][i] + data["width"][i] for i in indices) / scale_x
+            y2 = max(data["top"][i] + data["height"][i] for i in indices) / scale_y
             bbox = [
-                self._clamp(x1, 0, width),
-                self._clamp(y1, 0, height),
-                self._clamp(x2, 0, width),
-                self._clamp(y2, 0, height),
+                self._clamp(round(x1), 0, width),
+                self._clamp(round(y1), 0, height),
+                self._clamp(round(x2), 0, width),
+                self._clamp(round(y2), 0, height),
             ]
             if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
                 continue
@@ -420,7 +539,44 @@ class OCRService:
         return blocks
 
     def _min_confidence(self) -> float:
-        return max(0.0, min(1.0, self._safe_float(os.getenv("OCR_MIN_CONFIDENCE"), default=0.45)))
+        return max(0.0, min(1.0, self._safe_float(os.getenv("OCR_MIN_CONFIDENCE"), default=0.30)))
+
+    def _prepare_ocr_image(self, image: Image.Image) -> tuple[Image.Image, float, float]:
+        if os.getenv("OCR_PREPROCESS_ENABLED", "1") != "1":
+            return image, 1.0, 1.0
+
+        width, height = image.size
+        longest_side = max(width, height)
+        if width <= 0 or height <= 0 or longest_side <= 0:
+            return image, 1.0, 1.0
+
+        target_long_side = max(0, int(self._safe_float(os.getenv("OCR_UPSCALE_LONG_SIDE"), default=2200)))
+        max_upscale = max(1.0, self._safe_float(os.getenv("OCR_MAX_UPSCALE"), default=2.5))
+        scale = 1.0
+        if target_long_side > longest_side:
+            scale = min(max_upscale, target_long_side / float(longest_side))
+
+        prepared = image
+        if scale > 1.01:
+            target_size = (
+                max(1, round(width * scale)),
+                max(1, round(height * scale)),
+            )
+            prepared = prepared.resize(target_size, Image.Resampling.LANCZOS)
+
+        contrast = self._safe_float(os.getenv("OCR_CONTRAST"), default=1.15)
+        if contrast > 0 and abs(contrast - 1.0) > 0.01:
+            prepared = ImageEnhance.Contrast(prepared).enhance(contrast)
+
+        sharpness = self._safe_float(os.getenv("OCR_SHARPNESS"), default=1.25)
+        if sharpness > 0 and abs(sharpness - 1.0) > 0.01:
+            prepared = ImageEnhance.Sharpness(prepared).enhance(sharpness)
+
+        if os.getenv("OCR_UNSHARP_MASK", "1") == "1":
+            prepared = prepared.filter(ImageFilter.UnsharpMask(radius=1.2, percent=120, threshold=3))
+
+        prepared_width, prepared_height = prepared.size
+        return prepared, prepared_width / float(width), prepared_height / float(height)
 
     def _safe_float(self, value: Any, default: float) -> float:
         try:

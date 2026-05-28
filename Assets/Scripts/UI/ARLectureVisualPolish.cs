@@ -11,6 +11,8 @@ public class ARLectureVisualPolish : MonoBehaviour
     private static readonly Color TranslateColor = new Color(0.52f, 0.28f, 0.74f, 0.96f);
     private static readonly Color SuccessColor = new Color(0.15f, 0.72f, 0.45f, 0.9f);
     private static readonly Color TextColor = new Color(0.94f, 0.96f, 1f, 1f);
+    private static readonly Color LensOverlayColor = new Color(0.92f, 0.92f, 0.88f, 0.78f);
+    private static readonly Color LensTextColor = new Color(0.14f, 0.15f, 0.17f, 0.96f);
 
     private bool applied;
 
@@ -37,21 +39,31 @@ public class ARLectureVisualPolish : MonoBehaviour
     {
         if (labelRoot == null) return;
 
+        HideDecorativeLabelParts(labelRoot);
+
         foreach (Image image in labelRoot.GetComponentsInChildren<Image>(true))
         {
-            image.color = new Color(0.04f, 0.05f, 0.07f, 0.78f);
-            AddShadow(image.gameObject, new Color(0f, 0f, 0f, 0.34f), new Vector2(0f, -3f));
+            if (!image.gameObject.activeInHierarchy) continue;
+
+            image.color = LensOverlayColor;
+            AddShadow(image.gameObject, new Color(0f, 0f, 0f, 0.16f), new Vector2(0f, -1f));
         }
 
         foreach (TextMeshProUGUI text in labelRoot.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
-            text.color = TextColor;
-            text.fontSize = Mathf.Max(text.fontSize, 30f);
-            text.fontStyle = FontStyles.Bold;
-            text.alignment = TextAlignmentOptions.Center;
-        }
+            if (!text.gameObject.activeInHierarchy) continue;
 
-        EnsureAccentBar(labelRoot.transform);
+            text.color = LensTextColor;
+            text.fontSize = Mathf.Clamp(text.fontSize, 14f, 28f);
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 13f;
+            text.fontSizeMax = 28f;
+            text.maxVisibleLines = 99;
+            text.enableWordWrapping = true;
+            text.overflowMode = TextOverflowModes.Ellipsis;
+            text.fontStyle = FontStyles.Normal;
+            text.alignment = TextAlignmentOptions.Left;
+        }
     }
 
     public static void StyleSubtitle(GameObject subtitleRoot)
@@ -67,8 +79,15 @@ public class ARLectureVisualPolish : MonoBehaviour
         foreach (TextMeshProUGUI text in subtitleRoot.GetComponentsInChildren<TextMeshProUGUI>(true))
         {
             text.color = TextColor;
-            text.fontSize = Mathf.Max(text.fontSize, 28f);
+            text.fontSize = Mathf.Clamp(text.fontSize, 18f, 30f);
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 18f;
+            text.fontSizeMax = 30f;
+            text.maxVisibleLines = 3;
+            text.enableWordWrapping = true;
+            text.overflowMode = TextOverflowModes.Ellipsis;
             text.fontStyle = FontStyles.Normal;
+            text.alignment = TextAlignmentOptions.Center;
         }
     }
 
@@ -93,6 +112,30 @@ public class ARLectureVisualPolish : MonoBehaviour
             if (text.fontSize < 18f)
             {
                 text.fontSize = 18f;
+            }
+        }
+    }
+
+    private static void HideDecorativeLabelParts(GameObject labelRoot)
+    {
+        foreach (Transform child in labelRoot.GetComponentsInChildren<Transform>(true))
+        {
+            string lowerName = child.name.ToLowerInvariant();
+            if (lowerName.Contains("languagebadge") ||
+                lowerName.Contains("accentbar") ||
+                lowerName.Contains("en→vi") ||
+                lowerName.Contains("en->vi"))
+            {
+                child.gameObject.SetActive(false);
+            }
+        }
+
+        foreach (TextMeshProUGUI text in labelRoot.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            string value = text.text.Trim().ToLowerInvariant();
+            if (value == "en→vi" || value == "en->vi")
+            {
+                text.gameObject.SetActive(false);
             }
         }
     }

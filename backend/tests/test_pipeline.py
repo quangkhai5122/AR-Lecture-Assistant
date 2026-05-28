@@ -4,6 +4,7 @@ import base64
 import builtins
 import importlib.util
 import io
+import shutil
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,8 @@ def test_pipeline_mock_returns_blocks():
     assert result["mock_used"] is True
     assert result["provider"]["ocr"] == "mock"
     assert "translated_text" in result["blocks"][0]
+    assert result["document_surface"]["method"] == "ocr_bbox_union"
+    assert len(result["document_surface"]["corners"]) == 8
 
 
 def test_decoded_image_dimensions_are_used_even_if_hints_differ():
@@ -102,6 +105,100 @@ def test_ocr_endpoint_accepts_mock_without_image():
     assert data["provider"] == {"ocr": "mock"}
     assert data["mock_used"] is True
     assert data["blocks"]
+
+
+def test_ocr_endpoint_accepts_empty_provider_as_default():
+    client = app.test_client()
+    response = client.post("/ocr", json={
+        "mock": True,
+        "image_width": 640,
+        "image_height": 360,
+        "ocr_provider": "",
+    })
+    assert response.status_code == 200
+    assert response.get_json()["provider"] == {"ocr": "mock"}
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract binary is not installed")
+def test_tesseract_ocr_on_sample_slide(monkeypatch):
+    pytest.importorskip("pytesseract")
+
+    image_path = Path(__file__).resolve().parents[2] / "samples" / "slides" / "slide_01.png"
+    monkeypatch.setenv("OCR_PROVIDER", "tesseract")
+    monkeypatch.setenv("OCR_MIN_CONFIDENCE", "0.2")
+
+    client = app.test_client()
+    with Image.open(image_path) as image:
+        width, height = image.size
+
+    response = client.post("/ocr", json={
+        "mock": False,
+        "image_base64": base64.b64encode(image_path.read_bytes()).decode("utf-8"),
+        "image_width": width,
+        "image_height": height,
+        "ocr_provider": "tesseract",
+    })
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["provider"] == {"ocr": "tesseract"}
+    assert data["mock_used"] is False
+    assert data["blocks"]
+    assert all(block["bbox"][2] > block["bbox"][0] for block in data["blocks"])
+    assert all(block["bbox"][3] > block["bbox"][1] for block in data["blocks"])
+    assert all(0 <= block["confidence"] <= 1 for block in data["blocks"])
+
+
+@pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract binary is not installed")
+def test_pipeline_uses_real_tesseract_ocr_with_mock_translation(monkeypatch):
+    pytest.importorskip("pytesseract")
+
+    image_path = Path(__file__).resolve().parents[2] / "samples" / "slides" / "slide_01.png"
+    monkeypatch.setenv("OCR_PROVIDER", "tesseract")
+    monkeypatch.setenv("OCR_MIN_CONFIDENCE", "0.2")
+
+    client = app.test_client()
+    with Image.open(image_path) as image:
+        width, height = image.size
+
+    response = client.post("/pipeline/frame", json={
+        "frame_id": "slide_01_real_ocr",
+        "mock": False,
+        "target_language": "vi",
+        "image_base64": base64.b64encode(image_path.read_bytes()).decode("utf-8"),
+        "image_width": width,
+        "image_height": height,
+        "ocr_provider": "tesseract",
+        "translation_provider": "mock",
+    })
+    data = response.get_json()
+
+    assert response.status_code == 200
+    assert data["provider"] == {"ocr": "tesseract", "translation": "mock"}
+    assert data["blocks"]
+    assert data["blocks"][0]["source_text"]
+    assert data["blocks"][0]["translated_text"]
+    assert data["document_surface"]["corners"]
+    assert all("bbox" in block and len(block["bbox"]) == 4 for block in data["blocks"])
+
+
+def test_document_surface_estimation_from_ocr_boxes():
+    service = PipelineService()
+    surface = service.estimate_document_surface(
+        [
+            {"bbox": [100, 120, 500, 160]},
+            {"bbox": [140, 300, 620, 350]},
+        ],
+        image_width=800,
+        image_height=600,
+    )
+
+    assert surface is not None
+    assert surface["method"] == "ocr_bbox_union"
+    assert surface["corners"][0] < 100
+    assert surface["corners"][1] < 120
+    assert surface["corners"][4] > 620
+    assert surface["corners"][5] > 350
 
 
 def test_translate_endpoint_mock_keeps_ids_and_formula_type():
@@ -194,6 +291,108 @@ def test_paddleocr_normalization_clamps_and_filters():
             "confidence": 0.91,
         }
     ]
+
+
+def test_paddleocr_normalization_maps_upscaled_boxes_to_original_image():
+    service = OCRService()
+    raw = [
+        {
+            "rec_texts": ["Upscaled text"],
+            "rec_scores": [0.92],
+            "rec_polys": [
+                [[20, 10], [100, 10], [100, 30], [20, 30]],
+            ],
+        }
+    ]
+
+    blocks = service.normalize_paddle_output(
+        raw,
+        image_width=100,
+        image_height=50,
+        min_confidence=0.45,
+        scale_x=2.0,
+        scale_y=2.0,
+    )
+
+    assert blocks == [
+        {
+            "id": "ocr_1",
+            "text": "Upscaled text",
+            "bbox": [10, 5, 50, 15],
+            "confidence": 0.92,
+        }
+    ]
+
+
+def test_ocr_preprocess_upscales_small_images_with_cap(monkeypatch):
+    service = OCRService()
+    monkeypatch.setenv("OCR_UPSCALE_LONG_SIDE", "2200")
+    monkeypatch.setenv("OCR_MAX_UPSCALE", "2")
+    monkeypatch.setenv("OCR_CONTRAST", "1")
+    monkeypatch.setenv("OCR_SHARPNESS", "1")
+    monkeypatch.setenv("OCR_UNSHARP_MASK", "0")
+
+    image = Image.new("RGB", (800, 400), color=(255, 255, 255))
+    prepared, scale_x, scale_y = service._prepare_ocr_image(image)
+
+    assert prepared.size == (1600, 800)
+    assert scale_x == 2
+    assert scale_y == 2
+
+
+def test_paddle_detection_parameters_default_to_small_text_mode(monkeypatch):
+    monkeypatch.delenv("PADDLEOCR_DET_LIMIT_SIDE_LEN", raising=False)
+    monkeypatch.delenv("PADDLEOCR_DET_LIMIT_TYPE", raising=False)
+    monkeypatch.delenv("PADDLEOCR_DET_BOX_THRESH", raising=False)
+
+    service = OCRService()
+
+    assert service._paddle_detection_parameters() == {
+        "text_det_limit_type": "min",
+        "text_det_limit_side_len": 960,
+        "text_det_box_thresh": 0.45,
+    }
+    assert service._paddle_detection_parameters(legacy=True) == {
+        "det_limit_type": "min",
+        "det_limit_side_len": 960,
+        "det_db_box_thresh": 0.45,
+    }
+
+
+def test_paddleocr_unavailable_falls_back_to_tesseract(monkeypatch):
+    service = OCRService()
+
+    def fail_paddle(image, width, height):
+        raise PipelineError(
+            "PaddleOCR is unavailable",
+            status_code=503,
+            code="ocr_provider_not_available",
+        )
+
+    def fake_tesseract(image, width, height):
+        return [
+            {
+                "id": "ocr_1",
+                "text": "Fallback text",
+                "bbox": [1, 2, 30, 12],
+                "confidence": 0.8,
+            }
+        ]
+
+    monkeypatch.setattr(service, "_paddleocr_blocks", fail_paddle)
+    monkeypatch.setattr(service, "_tesseract_blocks", fake_tesseract)
+    monkeypatch.delenv("OCR_ENABLE_PROVIDER_FALLBACK", raising=False)
+    monkeypatch.delenv("OCR_FALLBACK_PROVIDER", raising=False)
+
+    result = service.recognize(
+        image_base64=_image_base64(width=80, height=40),
+        force_mock=False,
+        provider="paddleocr",
+    )
+
+    assert result.provider == "tesseract"
+    assert result.blocks[0]["text"] == "Fallback text"
+    assert any("falling back to 'tesseract'" in warning for warning in result.warnings)
 
 
 def test_translation_cache_avoids_second_request(monkeypatch):

@@ -1,4 +1,4 @@
-﻿// StateManager.cs
+// StateManager.cs
 using System.Collections;
 using UnityEngine;
 using UnityEngine.Events;
@@ -26,6 +26,23 @@ public class StateManager : MonoBehaviour
         currentState = newState;
         UpdateStatusUI();
         OnStateChanged?.Invoke(newState);
+    }
+
+    /// <summary>
+    /// Hiện lỗi chi tiết trên thanh status (thay vì "Có lỗi, hãy thử lại" mặc định)
+    /// </summary>
+    public void SetError(string errorMessage)
+    {
+        hasInitializedState = true;
+        currentState = AppState.Error;
+        if (statusText != null) statusText.text = errorMessage;
+        Color errorColor = new Color(0.92f, 0.22f, 0.22f, 0.88f);
+        if (statusBackground != null)
+        {
+            if (statusTransition != null) StopCoroutine(statusTransition);
+            statusTransition = StartCoroutine(AnimateStatus(errorColor));
+        }
+        OnStateChanged?.Invoke(AppState.Error);
     }
 
     private void UpdateStatusUI()

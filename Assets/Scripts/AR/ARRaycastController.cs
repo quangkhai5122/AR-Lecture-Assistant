@@ -1,4 +1,4 @@
-﻿// ARRaycastController.cs
+// ARRaycastController.cs
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
@@ -10,19 +10,38 @@ public class ARRaycastController : MonoBehaviour
 
     private List<ARRaycastHit> hits = new List<ARRaycastHit>();
 
+    // Mở rộng trackable types: polygon + bounds + estimated → hit rate tăng mạnh
+    private const TrackableType AllPlaneTypes =
+        TrackableType.PlaneWithinPolygon |
+        TrackableType.PlaneWithinBounds |
+        TrackableType.PlaneEstimated;
+
     /// <summary>
     /// Thực hiện raycast từ vị trí screen vào các plane đã detect
+    /// Thử polygon trước (chính xác nhất), rồi fallback sang bounds + estimated
     /// </summary>
     public bool TryRaycast(Vector2 screenPosition, out Pose hitPose)
     {
         hitPose = Pose.identity;
 
-        if (raycastManager.Raycast(screenPosition, hits,
-            TrackableType.PlaneWithinPolygon))
+        if (raycastManager == null)
+            raycastManager = FindAnyObjectByType<ARRaycastManager>();
+        if (raycastManager == null) return false;
+
+        // Thử chính xác nhất trước
+        if (raycastManager.Raycast(screenPosition, hits, TrackableType.PlaneWithinPolygon))
         {
             hitPose = hits[0].pose;
             return true;
         }
+
+        // Fallback: bounds + estimated (phạm vi lớn hơn)
+        if (raycastManager.Raycast(screenPosition, hits, AllPlaneTypes))
+        {
+            hitPose = hits[0].pose;
+            return true;
+        }
+
         return false;
     }
 

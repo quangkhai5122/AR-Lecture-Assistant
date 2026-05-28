@@ -21,7 +21,7 @@ Response:
   "service": "ar-lecture-translator-backend",
   "mode": "mvp",
   "provider": {
-    "ocr": "mock",
+    "ocr": "tesseract",
     "translation": "mock"
   }
 }
