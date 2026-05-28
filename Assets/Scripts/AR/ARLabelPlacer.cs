@@ -27,13 +27,16 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private int maxSubtitleCharacters = 220;
     [SerializeField] private bool groupNearbyTextBlocks = true;
     [SerializeField] private bool googleLensSingleOverlay = false;
+    [SerializeField] private bool useScreenSpaceTranslationOverlay = true;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.16f;
 
     // Quản lý nhiều label cùng lúc
     private List<GameObject> fixedLabels = new List<GameObject>();
+    private readonly List<GameObject> screenOverlayLabels = new List<GameObject>();
     private readonly List<Vector2> placedScreenPoints = new List<Vector2>();
     private readonly List<Rect> placedScreenRects = new List<Rect>();
     private GameObject currentSubtitle;
+    private Canvas screenOverlayCanvas;
 
     // Cache pose plane cuối cùng — dùng làm fallback khi raycast miss
     private Pose? cachedPlanePose = null;
@@ -131,6 +134,20 @@ public class ARLabelPlacer : MonoBehaviour
 
         DocumentSurfaceMapper surfaceMapper = DocumentSurfaceMapper.TryCreate(response, raycastController, BBoxPointToScreenPoint);
         List<TranslationLabelGroup> labelGroups = BuildTranslationLabelGroups(response);
+        if (useScreenSpaceTranslationOverlay)
+        {
+            int overlayPlaced = 0;
+            foreach (TranslationLabelGroup group in labelGroups)
+            {
+                if (CreateScreenOverlayLabel(group))
+                {
+                    overlayPlaced++;
+                }
+            }
+
+            return overlayPlaced;
+        }
+
         int placed = 0;
 
         for (int groupIndex = 0; groupIndex < labelGroups.Count; groupIndex++)
@@ -380,6 +397,86 @@ public class ARLabelPlacer : MonoBehaviour
         );
     }
 
+    private bool CreateScreenOverlayLabel(TranslationLabelGroup group)
+    {
+        if (group == null || string.IsNullOrWhiteSpace(group.Text)) return false;
+
+        Canvas canvas = EnsureScreenOverlayCanvas();
+        if (canvas == null) return false;
+
+        GameObject panel = new GameObject("LensTranslationOverlay");
+        panel.transform.SetParent(canvas.transform, false);
+        screenOverlayLabels.Add(panel);
+
+        RectTransform rect = panel.AddComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0f, 0f);
+        rect.anchorMax = new Vector2(0f, 0f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = group.ScreenPoint;
+        rect.sizeDelta = ResolveScreenOverlaySize(group);
+
+        Image background = panel.AddComponent<Image>();
+        background.color = new Color(0.92f, 0.92f, 0.88f, 0.72f);
+        background.raycastTarget = false;
+
+        GameObject textObject = new GameObject("TranslatedText");
+        textObject.transform.SetParent(panel.transform, false);
+        RectTransform textRect = textObject.AddComponent<RectTransform>();
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = new Vector2(3f, 2f);
+        textRect.offsetMax = new Vector2(-3f, -2f);
+
+        TextMeshProUGUI text = textObject.AddComponent<TextMeshProUGUI>();
+        text.text = Ellipsize(group.Text, maxLabelCharacters);
+        text.color = new Color(0.12f, 0.13f, 0.15f, 0.96f);
+        text.enableWordWrapping = true;
+        text.overflowMode = TextOverflowModes.Ellipsis;
+        text.enableAutoSizing = true;
+        text.fontSizeMax = ResolveScreenOverlayFontSize(group);
+        text.fontSizeMin = Mathf.Min(5f, text.fontSizeMax);
+        text.maxVisibleLines = 99;
+        text.alignment = TextAlignmentOptions.MidlineLeft;
+        text.margin = Vector4.zero;
+        text.raycastTarget = false;
+
+        return true;
+    }
+
+    private Canvas EnsureScreenOverlayCanvas()
+    {
+        if (screenOverlayCanvas != null) return screenOverlayCanvas;
+
+        GameObject canvasObject = new GameObject("GoogleLensTranslationOverlayCanvas");
+        screenOverlayCanvas = canvasObject.AddComponent<Canvas>();
+        screenOverlayCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        screenOverlayCanvas.sortingOrder = 40;
+
+        CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+        scaler.scaleFactor = 1f;
+
+        return screenOverlayCanvas;
+    }
+
+    private Vector2 ResolveScreenOverlaySize(TranslationLabelGroup group)
+    {
+        Vector2 size = group.ScreenSize;
+        int lineCount = Mathf.Max(1, group.LineCount);
+
+        float width = Mathf.Clamp(size.x * 1.05f, 42f, Screen.width * 0.94f);
+        float height = Mathf.Clamp(size.y * 1.12f, 18f * lineCount, Screen.height * 0.82f);
+
+        return new Vector2(width, height);
+    }
+
+    private float ResolveScreenOverlayFontSize(TranslationLabelGroup group)
+    {
+        int lineCount = Mathf.Max(1, group.LineCount);
+        float lineHeight = group.ScreenSize.y / lineCount;
+        return Mathf.Clamp(lineHeight * 0.78f, 5f, 24f);
+    }
+
     /// <summary>
     /// Hiển thị/cập nhật Subtitle ở dưới màn hình
     /// Chỉ có 1 subtitle tại 1 thời điểm
@@ -442,7 +539,17 @@ public class ARLabelPlacer : MonoBehaviour
                     Destroy(label);
             }
         }
+
+        foreach (var overlay in screenOverlayLabels)
+        {
+            if (overlay != null)
+            {
+                Destroy(overlay);
+            }
+        }
+
         fixedLabels.Clear();
+        screenOverlayLabels.Clear();
         placedScreenPoints.Clear();
         placedScreenRects.Clear();
     }
@@ -673,6 +780,7 @@ public class ARLabelPlacer : MonoBehaviour
         public Vector2 ImagePoint;
         public Vector2 ScreenPoint;
         public Vector2 ScreenSize;
+        public int LineCount;
     }
 
     private sealed class TranslationLabelGroup
@@ -682,6 +790,7 @@ public class ARLabelPlacer : MonoBehaviour
         public Vector2 ImagePoint;
         public Vector2 ScreenPoint;
         public Vector2 ScreenSize;
+        public int LineCount;
 
         public static TranslationLabelGroup FromItems(List<TranslationLabelItem> items, PipelineResponse response, ARLabelPlacer placer)
         {
@@ -698,13 +807,15 @@ public class ARLabelPlacer : MonoBehaviour
             }
 
             Vector2 imagePoint = union.center;
+            string text = string.Join("\n", lines);
             return new TranslationLabelGroup
             {
-                Text = string.Join("\n", lines),
+                Text = text,
                 BBox = union,
                 ImagePoint = imagePoint,
                 ScreenPoint = placer.ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height),
-                ScreenSize = ImageRectToScreenSize(union, response.image_width, response.image_height)
+                ScreenSize = ImageRectToScreenSize(union, response.image_width, response.image_height),
+                LineCount = Mathf.Max(1, lines.Count)
             };
         }
     }
