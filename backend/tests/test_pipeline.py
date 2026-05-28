@@ -293,6 +293,108 @@ def test_paddleocr_normalization_clamps_and_filters():
     ]
 
 
+def test_paddleocr_normalization_maps_upscaled_boxes_to_original_image():
+    service = OCRService()
+    raw = [
+        {
+            "rec_texts": ["Upscaled text"],
+            "rec_scores": [0.92],
+            "rec_polys": [
+                [[20, 10], [100, 10], [100, 30], [20, 30]],
+            ],
+        }
+    ]
+
+    blocks = service.normalize_paddle_output(
+        raw,
+        image_width=100,
+        image_height=50,
+        min_confidence=0.45,
+        scale_x=2.0,
+        scale_y=2.0,
+    )
+
+    assert blocks == [
+        {
+            "id": "ocr_1",
+            "text": "Upscaled text",
+            "bbox": [10, 5, 50, 15],
+            "confidence": 0.92,
+        }
+    ]
+
+
+def test_ocr_preprocess_upscales_small_images_with_cap(monkeypatch):
+    service = OCRService()
+    monkeypatch.setenv("OCR_UPSCALE_LONG_SIDE", "2200")
+    monkeypatch.setenv("OCR_MAX_UPSCALE", "2")
+    monkeypatch.setenv("OCR_CONTRAST", "1")
+    monkeypatch.setenv("OCR_SHARPNESS", "1")
+    monkeypatch.setenv("OCR_UNSHARP_MASK", "0")
+
+    image = Image.new("RGB", (800, 400), color=(255, 255, 255))
+    prepared, scale_x, scale_y = service._prepare_ocr_image(image)
+
+    assert prepared.size == (1600, 800)
+    assert scale_x == 2
+    assert scale_y == 2
+
+
+def test_paddle_detection_parameters_default_to_small_text_mode(monkeypatch):
+    monkeypatch.delenv("PADDLEOCR_DET_LIMIT_SIDE_LEN", raising=False)
+    monkeypatch.delenv("PADDLEOCR_DET_LIMIT_TYPE", raising=False)
+    monkeypatch.delenv("PADDLEOCR_DET_BOX_THRESH", raising=False)
+
+    service = OCRService()
+
+    assert service._paddle_detection_parameters() == {
+        "text_det_limit_type": "min",
+        "text_det_limit_side_len": 960,
+        "text_det_box_thresh": 0.45,
+    }
+    assert service._paddle_detection_parameters(legacy=True) == {
+        "det_limit_type": "min",
+        "det_limit_side_len": 960,
+        "det_db_box_thresh": 0.45,
+    }
+
+
+def test_paddleocr_unavailable_falls_back_to_tesseract(monkeypatch):
+    service = OCRService()
+
+    def fail_paddle(image, width, height):
+        raise PipelineError(
+            "PaddleOCR is unavailable",
+            status_code=503,
+            code="ocr_provider_not_available",
+        )
+
+    def fake_tesseract(image, width, height):
+        return [
+            {
+                "id": "ocr_1",
+                "text": "Fallback text",
+                "bbox": [1, 2, 30, 12],
+                "confidence": 0.8,
+            }
+        ]
+
+    monkeypatch.setattr(service, "_paddleocr_blocks", fail_paddle)
+    monkeypatch.setattr(service, "_tesseract_blocks", fake_tesseract)
+    monkeypatch.delenv("OCR_ENABLE_PROVIDER_FALLBACK", raising=False)
+    monkeypatch.delenv("OCR_FALLBACK_PROVIDER", raising=False)
+
+    result = service.recognize(
+        image_base64=_image_base64(width=80, height=40),
+        force_mock=False,
+        provider="paddleocr",
+    )
+
+    assert result.provider == "tesseract"
+    assert result.blocks[0]["text"] == "Fallback text"
+    assert any("falling back to 'tesseract'" in warning for warning in result.warnings)
+
+
 def test_translation_cache_avoids_second_request(monkeypatch):
     calls = []
 
