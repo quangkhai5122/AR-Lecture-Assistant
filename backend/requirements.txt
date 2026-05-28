@@ -1,9 +1,11 @@
 Flask==3.0.3
 flask-cors==4.0.1
+flask-sock==0.7.0
 numpy>=2.0.0
 Pillow>=11.0.0
 requests==2.32.3
 pytest==8.3.2
+google-cloud-speech>=2.28.0
 
 # Real OCR provider used by OCR_PROVIDER=paddleocr.
 # Do not list paddlepaddle-gpu here: keep the CUDA-specific Paddle install

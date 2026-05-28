@@ -18,6 +18,7 @@ public class UIManager : MonoBehaviour
     [SerializeField] private StateManager stateManager;
     [SerializeField] private ButtonController buttonController;
     [SerializeField] private DebugPanelController debugPanel;
+    [SerializeField] private SpeechTranscriptController speechTranscriptController;
 
     [Header("=== Services ===")]
     [SerializeField] private MockOCRService ocrService;
@@ -40,6 +41,7 @@ public class UIManager : MonoBehaviour
             polish = gameObject.AddComponent<ARLectureVisualPolish>();
         }
         polish.Apply();
+        EnsureSpeechTranscriptController();
 
         // Bắt đầu ở trạng thái Idle
         stateManager.SetState(AppState.Idle);
@@ -57,6 +59,19 @@ public class UIManager : MonoBehaviour
         stateManager.OnStateChanged.AddListener(OnStateChanged);
 
         Debug.Log("[UIManager] App initialized successfully");
+    }
+
+    private void EnsureSpeechTranscriptController()
+    {
+        if (speechTranscriptController == null)
+        {
+            speechTranscriptController = FindAnyObjectByType<SpeechTranscriptController>();
+        }
+
+        if (speechTranscriptController == null)
+        {
+            speechTranscriptController = gameObject.AddComponent<SpeechTranscriptController>();
+        }
     }
 
     private void OnDestroy()

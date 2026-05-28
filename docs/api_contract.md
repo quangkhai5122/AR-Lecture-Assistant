@@ -155,6 +155,132 @@ Request:
 }
 ```
 
+## `POST /speech/transcribe`
+
+Unity calls this endpoint with microphone PCM16 audio chunks. Backend sends the audio to Google Cloud Speech-to-Text.
+
+Request:
+
+```json
+{
+  "audio_base64": "...",
+  "audio_encoding": "LINEAR16",
+  "sample_rate_hz": 16000,
+  "language_code": "en-US",
+  "mock": false,
+  "speech_provider": "google"
+}
+```
+
+## `WS /speech/stream`
+
+Unity uses this endpoint for low-latency realtime speech. The first WebSocket message must be a JSON text config, then Unity sends binary PCM16 audio frames continuously. Backend keeps a Google Cloud Speech-to-Text `streaming_recognize` session open and returns JSON text messages.
+
+First message:
+
+```json
+{
+  "audio_encoding": "LINEAR16",
+  "sample_rate_hz": 16000,
+  "language_code": "en-US",
+  "interim_results": true,
+  "mock": false,
+  "speech_provider": "google"
+}
+```
+
+Server result message:
+
+```json
+{
+  "type": "result",
+  "transcript": "Today we study neural networks.",
+  "is_final": false,
+  "stability": 0.82,
+  "confidence": 0.0,
+  "provider": "google"
+}
+```
+
+Unity still waits for full sentences before Gemini translation.
+
+Response:
+
+```json
+{
+  "transcript": "Today we study neural networks.",
+  "language_code": "en-US",
+  "confidence": 0.92,
+  "provider": {"speech": "google"},
+  "mock_used": false,
+  "warnings": []
+}
+```
+
+## `POST /speech/translate-text`
+
+Unity calls this only after the transcript sentence gate decides a complete sentence is ready. Backend sends the sentence and recent context to Gemini.
+
+Request:
+
+```json
+{
+  "text": "Today we study neural networks.",
+  "source_language": "en-US",
+  "target_language": "vi",
+  "context": ["This is a machine learning lecture."],
+  "mock": false,
+  "llm_provider": "gemini"
+}
+```
+
+Response:
+
+```json
+{
+  "source_text": "Today we study neural networks.",
+  "translated_text": "Hôm nay chúng ta học về mạng nơ-ron.",
+  "source_language": "en-US",
+  "target_language": "vi",
+  "provider": {"llm": "gemini"},
+  "model": "gemini-2.5-flash-lite",
+  "mock_used": false,
+  "warnings": []
+}
+```
+
+## `POST /speech/translate`
+
+Convenience endpoint for quick backend tests. It runs audio -> Google Speech-to-Text -> Gemini in one request. The Unity realtime modal uses the two-step flow above so it can wait for full sentences before translation.
+
+## `POST /speech/summarize`
+
+Unity calls this when the user presses `AI summary`. Backend uses Gemini.
+
+Request:
+
+```json
+{
+  "text": "EN: ...\nVI: ...",
+  "target_language": "vi",
+  "mock": false,
+  "llm_provider": "gemini"
+}
+```
+
+Response:
+
+```json
+{
+  "summary_text": "Tóm tắt nội dung chính...",
+  "target_language": "vi",
+  "provider": {"llm": "gemini"},
+  "model": "gemini-2.5-flash-lite",
+  "mock_used": false,
+  "warnings": []
+}
+```
+
 Response:
 
 ```json
