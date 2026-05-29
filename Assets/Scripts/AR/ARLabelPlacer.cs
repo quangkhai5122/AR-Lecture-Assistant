@@ -28,13 +28,13 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private bool groupNearbyTextBlocks = false;
     [SerializeField] private bool googleLensSingleOverlay = false;
     [SerializeField] private bool useScreenSpaceTranslationOverlay = true;
-    [SerializeField] private bool mergeSameLineTextBlocks = false;
+    [SerializeField] private bool mergeSameLineTextBlocks = true;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.16f;
     [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.91f, 0.95f, 0.98f, 0.92f);
     [SerializeField] private Color lensOverlayTextColor = new Color(0.10f, 0.11f, 0.12f, 0.98f);
-    [SerializeField] private float lensOverlayWidthExpansion = 1.14f;
-    [SerializeField] private float lensOverlayHeightExpansion = 1.10f;
-    [SerializeField] private int lensOverlayMaxLines = 4;
+    [SerializeField] private float lensOverlayWidthExpansion = 1.04f;
+    [SerializeField] private float lensOverlayHeightExpansion = 1.04f;
+    [SerializeField] private int lensOverlayMaxLines = 1;
 
     // Quản lý nhiều label cùng lúc
     private List<GameObject> fixedLabels = new List<GameObject>();
@@ -443,10 +443,10 @@ public class ARLabelPlacer : MonoBehaviour
         float maxTop = Mathf.Min(union.yMax, item.BBox.yMax);
         float overlap = Mathf.Max(0f, maxTop - minBottom);
         float minHeight = Mathf.Max(1f, Mathf.Min(union.height, item.BBox.height));
-        bool verticalOverlap = overlap / minHeight >= 0.45f;
+        bool verticalOverlap = overlap / minHeight >= 0.30f;
 
         centerDistance = Mathf.Abs(union.center.y - item.BBox.center.y);
-        bool centerAligned = centerDistance <= Mathf.Max(union.height, item.BBox.height) * 0.62f;
+        bool centerAligned = centerDistance <= Mathf.Max(union.height, item.BBox.height) * 0.85f;
 
         float horizontalGap = 0f;
         if (item.BBox.xMin > union.xMax)
@@ -458,7 +458,7 @@ public class ARLabelPlacer : MonoBehaviour
             horizontalGap = union.xMin - item.BBox.xMax;
         }
 
-        float maxHorizontalGap = Mathf.Max(imageWidth * 0.035f, Mathf.Max(union.height, item.BBox.height) * 3.2f);
+        float maxHorizontalGap = Mathf.Max(imageWidth * 0.05f, Mathf.Max(union.height, item.BBox.height) * 4.5f);
         return (verticalOverlap || centerAligned) && horizontalGap <= maxHorizontalGap;
     }
 
@@ -508,8 +508,8 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         return new Vector2(
-            Mathf.Max(72f, imageRect.width / imageWidth * Screen.width),
-            Mathf.Max(36f, imageRect.height / imageHeight * Screen.height)
+            Mathf.Max(24f, imageRect.width / imageWidth * Screen.width),
+            Mathf.Max(12f, imageRect.height / imageHeight * Screen.height)
         );
     }
 
@@ -544,15 +544,17 @@ public class ARLabelPlacer : MonoBehaviour
         textRect.offsetMin = ResolveOverlayTextPadding(overlaySize);
         textRect.offsetMax = -ResolveOverlayTextPadding(overlaySize);
 
+        int visibleLines = ResolveOverlayLineCount(group);
+
         TextMeshProUGUI text = textObject.AddComponent<TextMeshProUGUI>();
-        text.text = Ellipsize(group.Text, maxLabelCharacters);
+        text.text = Ellipsize(CollapseWhitespace(group.Text), maxLabelCharacters);
         text.color = lensOverlayTextColor;
-        text.enableWordWrapping = true;
+        text.enableWordWrapping = visibleLines > 1;
         text.overflowMode = TextOverflowModes.Truncate;
         text.enableAutoSizing = true;
         text.fontSizeMax = ResolveScreenOverlayFontSize(group);
-        text.fontSizeMin = Mathf.Min(5f, text.fontSizeMax);
-        text.maxVisibleLines = 99;
+        text.fontSizeMin = Mathf.Min(4f, text.fontSizeMax);
+        text.maxVisibleLines = visibleLines;
         text.alignment = TextAlignmentOptions.MidlineLeft;
         text.margin = Vector4.zero;
         text.raycastTarget = false;
@@ -581,12 +583,12 @@ public class ARLabelPlacer : MonoBehaviour
         Vector2 size = group.ScreenSize;
         int lineCount = ResolveOverlayLineCount(group);
 
-        float width = Mathf.Clamp(size.x * lensOverlayWidthExpansion, 64f, Screen.width * 0.96f);
-        float expectedTextHeight = ResolveScreenOverlayFontSize(group) * 1.18f * lineCount + 8f;
+        float width = Mathf.Clamp(size.x * lensOverlayWidthExpansion, 24f, Screen.width * 0.96f);
+        float sourceLineHeight = Mathf.Max(1f, size.y / Mathf.Max(1, group.LineCount));
         float height = Mathf.Clamp(
-            Mathf.Max(size.y * lensOverlayHeightExpansion, expectedTextHeight),
-            18f,
-            Mathf.Min(96f, Screen.height * 0.16f)
+            sourceLineHeight * lensOverlayHeightExpansion * lineCount,
+            12f,
+            Mathf.Min(80f, Screen.height * 0.12f)
         );
 
         return new Vector2(width, height);
@@ -594,24 +596,19 @@ public class ARLabelPlacer : MonoBehaviour
 
     private float ResolveScreenOverlayFontSize(TranslationLabelGroup group)
     {
-        int lineCount = ResolveOverlayLineCount(group);
         float lineHeight = group.ScreenSize.y / Mathf.Max(1, group.LineCount);
-        float sizeByHeight = lineHeight * 0.82f;
-        float sizeByWidth = group.ScreenSize.x / Mathf.Max(8f, group.Text.Length * 0.55f);
-        float fittedSize = lineCount > 1 ? Mathf.Min(sizeByHeight * 0.92f, sizeByWidth * 1.15f) : Mathf.Min(sizeByHeight, sizeByWidth * 1.25f);
-        return Mathf.Clamp(fittedSize, 7f, 24f);
+        float sizeByHeight = lineHeight * 0.76f;
+        float fittedWidth = Mathf.Max(1f, group.ScreenSize.x * lensOverlayWidthExpansion - 8f);
+        float sizeByWidth = fittedWidth / Mathf.Max(8f, CollapseWhitespace(group.Text).Length * 0.52f);
+        float fittedSize = Mathf.Min(sizeByHeight, sizeByWidth * 1.12f);
+        return Mathf.Clamp(fittedSize, 4f, 22f);
     }
 
     private int ResolveOverlayLineCount(TranslationLabelGroup group)
     {
         if (group == null || string.IsNullOrWhiteSpace(group.Text)) return 1;
 
-        int explicitLines = Mathf.Max(1, group.LineCount);
-        float availableWidth = Mathf.Max(1f, group.ScreenSize.x * lensOverlayWidthExpansion);
-        float fontSize = Mathf.Clamp(group.ScreenSize.y * 0.80f, 6f, 28f);
-        float approximateTextWidth = group.Text.Length * fontSize * 0.48f;
-        int wrappedLines = Mathf.CeilToInt(approximateTextWidth / availableWidth);
-        return Mathf.Clamp(Mathf.Max(explicitLines, wrappedLines), 1, Mathf.Max(1, lensOverlayMaxLines));
+        return Mathf.Clamp(Mathf.Max(1, group.LineCount), 1, Mathf.Max(1, lensOverlayMaxLines));
     }
 
     private Vector2 ResolveOverlayTextPadding(Vector2 overlaySize)
@@ -911,6 +908,17 @@ public class ARLabelPlacer : MonoBehaviour
         if (maxCharacters <= 3 || trimmed.Length <= maxCharacters) return trimmed;
 
         return trimmed.Substring(0, maxCharacters - 1).TrimEnd() + "…";
+    }
+
+    private static string CollapseWhitespace(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+        string[] parts = value.Split(
+            new[] { ' ', '\n', '\r', '\t' },
+            System.StringSplitOptions.RemoveEmptyEntries
+        );
+        return string.Join(" ", parts);
     }
 
     private static int EstimateLineCount(string text)
