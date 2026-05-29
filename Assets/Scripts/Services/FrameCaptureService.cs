@@ -36,7 +36,7 @@ public enum FrameImageEncoding
 public class FrameCaptureService : MonoBehaviour
 {
     [Header("Capture Source")]
-    public FrameCaptureSource captureSource = FrameCaptureSource.Auto;
+    public FrameCaptureSource captureSource = FrameCaptureSource.Screenshot;
     [SerializeField] private ARCameraManager arCameraManager;
 
     [Tooltip("Cố chọn AR camera configuration có độ phân giải cao nhất trước khi capture OCR.")]
@@ -44,20 +44,20 @@ public class FrameCaptureService : MonoBehaviour
 
     [Tooltip("Trong Auto mode, bỏ qua AR CPU image nếu cạnh dài vẫn quá thấp và fallback sang screenshot.")]
     [Range(0, 4096)]
-    [SerializeField] private int minRawCameraLongSide = 1600;
+    [SerializeField] private int minRawCameraLongSide = 1280;
 
     [Header("Upload Image")]
-    [SerializeField] private FrameImageEncoding imageEncoding = FrameImageEncoding.Png;
+    [SerializeField] private FrameImageEncoding imageEncoding = FrameImageEncoding.Jpeg;
 
     [Tooltip("Khi phải fallback sang screenshot, ẩn UI screen-space trong đúng frame capture để OCR không đọc nhầm nút/overlay.")]
     [SerializeField] private bool hideScreenSpaceCanvasesForScreenshot = true;
 
     [Range(10, 95)]
-    public int jpegQuality = 90;
+    public int jpegQuality = 92;
 
     [Tooltip("Giới hạn cạnh dài nhất của ảnh gửi backend. 2560 giữ chi tiết chữ nhỏ tốt hơn 1280 mà vẫn tránh payload quá lớn. Đặt 0 để tắt resize.")]
     [Range(0, 4096)]
-    public int maxImageDimension = 2560;
+    public int maxImageDimension = 3072;
 
     [Tooltip("Một số thiết bị cần lật ảnh CPU camera theo trục Y để khớp texture Unity.")]
     public bool mirrorCameraImageY = true;

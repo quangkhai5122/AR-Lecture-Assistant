@@ -40,6 +40,7 @@ public class ButtonController : MonoBehaviour
     [SerializeField] private Button freezeButton;
 
     [Header("Debug")]
+    [SerializeField] private bool showAdvancedControls = false;
     [SerializeField] private DebugPanelController debugPanel;
 
     private bool isFrozen = false;
@@ -64,7 +65,11 @@ public class ButtonController : MonoBehaviour
         scanButton.onClick.AddListener(OnScanPressed);
         translateButton.onClick.AddListener(OnTranslatePressed);
         clearButton.onClick.AddListener(OnClearPressed);
-        freezeButton.onClick.AddListener(OnFreezePressed);
+        if (freezeButton != null)
+        {
+            freezeButton.onClick.AddListener(OnFreezePressed);
+            freezeButton.gameObject.SetActive(showAdvancedControls);
+        }
         stateManager.OnStateChanged.AddListener(OnStateChanged);
 
         UpdateButtonStates();
@@ -404,8 +409,12 @@ public class ButtonController : MonoBehaviour
         translateButton.interactable =
             (state == AppState.PlaneDetected || state == AppState.Anchored);
         clearButton.interactable = (state == AppState.Anchored || state == AppState.Error);
-        freezeButton.interactable =
-            (state == AppState.Scanning || state == AppState.PlaneDetected || state == AppState.Anchored);
+        if (freezeButton != null)
+        {
+            freezeButton.interactable =
+                showAdvancedControls &&
+                (state == AppState.Scanning || state == AppState.PlaneDetected || state == AppState.Anchored);
+        }
     }
 
     private void SetPlaneTrackingEnabled(bool enabled)

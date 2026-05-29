@@ -6,6 +6,7 @@ using TMPro;
 
 public class DebugPanelController : MonoBehaviour
 {
+    [SerializeField] private bool showDebugToggle = false;
     [SerializeField] private GameObject panelRoot;
     [SerializeField] private TextMeshProUGUI ocrTextField;
     [SerializeField] private TextMeshProUGUI translatedTextField;
@@ -17,7 +18,15 @@ public class DebugPanelController : MonoBehaviour
 
     void Start()
     {
+        if (panelRoot == null) panelRoot = gameObject;
+        if (toggleButton == null)
+        {
+            GameObject toggleObject = GameObject.Find("ToggleDebugButton");
+            if (toggleObject != null) toggleButton = toggleObject.GetComponent<Button>();
+        }
+
         if (toggleButton != null) toggleButton.onClick.AddListener(TogglePanel);
+        if (toggleButton != null) toggleButton.gameObject.SetActive(showDebugToggle);
         if (panelRoot != null) panelRoot.SetActive(false);
     }
 
@@ -32,7 +41,7 @@ public class DebugPanelController : MonoBehaviour
     public void TogglePanel()
     {
         isVisible = !isVisible;
-        panelRoot.SetActive(isVisible);
+        if (panelRoot != null) panelRoot.SetActive(isVisible);
     }
 
     public void UpdateOCRText(string text)

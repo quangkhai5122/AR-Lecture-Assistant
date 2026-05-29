@@ -48,29 +48,29 @@ public class StateManager : MonoBehaviour
     private void UpdateStatusUI()
     {
         string message = "Sẵn sàng";
-        Color targetColor = new Color(0.12f, 0.14f, 0.18f, 0.82f);
+        Color targetColor = new Color(0.04f, 0.05f, 0.07f, 0.72f);
 
         switch (currentState)
         {
             case AppState.Idle:
                 message = "Sẵn sàng";
-                targetColor = new Color(0.12f, 0.14f, 0.18f, 0.82f);
+                targetColor = new Color(0.04f, 0.05f, 0.07f, 0.72f);
                 break;
             case AppState.Scanning:
                 message = "Đang quét bảng/slide...";
-                targetColor = new Color(0.26f, 0.42f, 0.92f, 0.86f);
+                targetColor = new Color(0.10f, 0.42f, 0.88f, 0.82f);
                 break;
             case AppState.PlaneDetected:
                 message = "Đã phát hiện bảng/slide";
-                targetColor = new Color(0.15f, 0.72f, 0.45f, 0.86f);
+                targetColor = new Color(0.08f, 0.68f, 0.52f, 0.82f);
                 break;
             case AppState.Translating:
                 message = "Đang dịch nội dung...";
-                targetColor = new Color(0.82f, 0.58f, 0.18f, 0.88f);
+                targetColor = new Color(0.38f, 0.34f, 0.95f, 0.84f);
                 break;
             case AppState.Anchored:
                 message = "Đã ghim bản dịch";
-                targetColor = new Color(0.15f, 0.72f, 0.45f, 0.86f);
+                targetColor = new Color(0.08f, 0.68f, 0.52f, 0.84f);
                 break;
             case AppState.Error:
                 message = "Có lỗi, hãy thử lại";

@@ -25,16 +25,17 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private float maxDistanceScale = 1.25f;
     [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
+    [SerializeField] private bool useGoogleLensOverlayDefaults = true;
     [SerializeField] private bool groupNearbyTextBlocks = false;
     [SerializeField] private bool googleLensSingleOverlay = false;
     [SerializeField] private bool useScreenSpaceTranslationOverlay = true;
-    [SerializeField] private bool mergeSameLineTextBlocks = false;
-    [SerializeField] private float groupMaxVerticalGapRatio = 0.16f;
-    [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.91f, 0.95f, 0.98f, 0.92f);
+    [SerializeField] private bool mergeSameLineTextBlocks = true;
+    [SerializeField] private float groupMaxVerticalGapRatio = 0.12f;
+    [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.96f, 0.98f, 1f, 0.88f);
     [SerializeField] private Color lensOverlayTextColor = new Color(0.10f, 0.11f, 0.12f, 0.98f);
-    [SerializeField] private float lensOverlayWidthExpansion = 1.14f;
-    [SerializeField] private float lensOverlayHeightExpansion = 1.10f;
-    [SerializeField] private int lensOverlayMaxLines = 4;
+    [SerializeField] private float lensOverlayWidthExpansion = 1.32f;
+    [SerializeField] private float lensOverlayHeightExpansion = 1.28f;
+    [SerializeField] private int lensOverlayMaxLines = 3;
 
     // Quản lý nhiều label cùng lúc
     private List<GameObject> fixedLabels = new List<GameObject>();
@@ -54,6 +55,22 @@ public class ARLabelPlacer : MonoBehaviour
     {
         cachedPlanePose = pose;
         Debug.Log($"[ARLabelPlacer] Cached plane pose at {pose.position}");
+    }
+
+    private void ApplyGoogleLensOverlayDefaults()
+    {
+        if (!useGoogleLensOverlayDefaults)
+        {
+            return;
+        }
+
+        useScreenSpaceTranslationOverlay = true;
+        mergeSameLineTextBlocks = true;
+        groupNearbyTextBlocks = false;
+        googleLensSingleOverlay = false;
+        lensOverlayWidthExpansion = Mathf.Max(lensOverlayWidthExpansion, 1.32f);
+        lensOverlayHeightExpansion = Mathf.Max(lensOverlayHeightExpansion, 1.28f);
+        lensOverlayMaxLines = Mathf.Clamp(lensOverlayMaxLines, 1, 3);
     }
 
     /// <summary>
@@ -114,31 +131,9 @@ public class ARLabelPlacer : MonoBehaviour
     {
         if (response == null || response.blocks == null) return 0;
 
-        // Auto-find dependencies nếu chưa được gán trong Inspector
-        if (raycastController == null)
-            raycastController = FindAnyObjectByType<ARRaycastController>();
-        if (anchorPlacer == null)
-            anchorPlacer = FindAnyObjectByType<ARAnchorPlacer>();
-        if (raycastController == null || anchorPlacer == null || fixedLabelPrefab == null)
-        {
-            Debug.LogWarning($"[ARLabelPlacer] PlacePipelineLabels: missing deps");
-            return 0;
-        }
-
+        ApplyGoogleLensOverlayDefaults();
         ClearFixedLabels();
 
-        // Pre-cache center raycast — fallback khi per-block raycast miss
-        bool hasCenterHit = raycastController.TryRaycastFromCenter(out Pose centerPose);
-        if (hasCenterHit)
-        {
-            cachedPlanePose = centerPose; // Lưu để dùng khi raycast miss sau này
-        }
-
-        // Xác định fallback pose (center hit hoặc cached từ lúc detect plane)
-        Pose? fallbackPose = hasCenterHit ? centerPose : cachedPlanePose;
-        bool hasFallback = fallbackPose.HasValue;
-
-        DocumentSurfaceMapper surfaceMapper = DocumentSurfaceMapper.TryCreate(response, raycastController, BBoxPointToScreenPoint);
         List<TranslationLabelGroup> labelGroups = BuildTranslationLabelGroups(response);
         if (useScreenSpaceTranslationOverlay)
         {
@@ -153,6 +148,30 @@ public class ARLabelPlacer : MonoBehaviour
 
             return overlayPlaced;
         }
+
+        // Auto-find dependencies nếu chưa được gán trong Inspector
+        if (raycastController == null)
+            raycastController = FindAnyObjectByType<ARRaycastController>();
+        if (anchorPlacer == null)
+            anchorPlacer = FindAnyObjectByType<ARAnchorPlacer>();
+        if (raycastController == null || anchorPlacer == null || fixedLabelPrefab == null)
+        {
+            Debug.LogWarning($"[ARLabelPlacer] PlacePipelineLabels: missing deps");
+            return 0;
+        }
+
+        // Pre-cache center raycast — fallback khi per-block raycast miss
+        bool hasCenterHit = raycastController.TryRaycastFromCenter(out Pose centerPose);
+        if (hasCenterHit)
+        {
+            cachedPlanePose = centerPose; // Lưu để dùng khi raycast miss sau này
+        }
+
+        // Xác định fallback pose (center hit hoặc cached từ lúc detect plane)
+        Pose? fallbackPose = hasCenterHit ? centerPose : cachedPlanePose;
+        bool hasFallback = fallbackPose.HasValue;
+
+        DocumentSurfaceMapper surfaceMapper = DocumentSurfaceMapper.TryCreate(response, raycastController, BBoxPointToScreenPoint);
 
         int placed = 0;
 
@@ -530,7 +549,10 @@ public class ARLabelPlacer : MonoBehaviour
         rect.pivot = new Vector2(0.5f, 0.5f);
         Vector2 overlaySize = ResolveScreenOverlaySize(group);
         rect.sizeDelta = overlaySize;
-        rect.anchoredPosition = ClampOverlayCenterToScreen(group.ScreenPoint, overlaySize);
+        Vector2 overlayCenter = ResolveNonOverlappingOverlayCenter(group.ScreenPoint, overlaySize);
+        rect.anchoredPosition = overlayCenter;
+        placedScreenPoints.Add(overlayCenter);
+        placedScreenRects.Add(ScreenRectForOverlay(overlayCenter, overlaySize));
 
         Image background = panel.AddComponent<Image>();
         background.color = lensOverlayBackgroundColor;
@@ -551,7 +573,7 @@ public class ARLabelPlacer : MonoBehaviour
         text.overflowMode = TextOverflowModes.Truncate;
         text.enableAutoSizing = true;
         text.fontSizeMax = ResolveScreenOverlayFontSize(group);
-        text.fontSizeMin = Mathf.Min(5f, text.fontSizeMax);
+        text.fontSizeMin = Mathf.Min(6f, text.fontSizeMax);
         text.maxVisibleLines = 99;
         text.alignment = TextAlignmentOptions.MidlineLeft;
         text.margin = Vector4.zero;
@@ -581,12 +603,12 @@ public class ARLabelPlacer : MonoBehaviour
         Vector2 size = group.ScreenSize;
         int lineCount = ResolveOverlayLineCount(group);
 
-        float width = Mathf.Clamp(size.x * lensOverlayWidthExpansion, 64f, Screen.width * 0.96f);
-        float expectedTextHeight = ResolveScreenOverlayFontSize(group) * 1.18f * lineCount + 8f;
+        float width = Mathf.Clamp(size.x * lensOverlayWidthExpansion, 84f, Screen.width * 0.96f);
+        float expectedTextHeight = ResolveScreenOverlayFontSize(group) * 1.22f * lineCount + 10f;
         float height = Mathf.Clamp(
             Mathf.Max(size.y * lensOverlayHeightExpansion, expectedTextHeight),
-            18f,
-            Mathf.Min(96f, Screen.height * 0.16f)
+            24f,
+            Mathf.Min(132f, Screen.height * 0.20f)
         );
 
         return new Vector2(width, height);
@@ -599,7 +621,7 @@ public class ARLabelPlacer : MonoBehaviour
         float sizeByHeight = lineHeight * 0.82f;
         float sizeByWidth = group.ScreenSize.x / Mathf.Max(8f, group.Text.Length * 0.55f);
         float fittedSize = lineCount > 1 ? Mathf.Min(sizeByHeight * 0.92f, sizeByWidth * 1.15f) : Mathf.Min(sizeByHeight, sizeByWidth * 1.25f);
-        return Mathf.Clamp(fittedSize, 7f, 24f);
+        return Mathf.Clamp(fittedSize, 9f, 24f);
     }
 
     private int ResolveOverlayLineCount(TranslationLabelGroup group)
@@ -629,6 +651,63 @@ public class ARLabelPlacer : MonoBehaviour
         return new Vector2(
             Mathf.Clamp(center.x, halfWidth, Mathf.Max(halfWidth, Screen.width - halfWidth)),
             Mathf.Clamp(center.y, halfHeight, Mathf.Max(halfHeight, Screen.height - halfHeight))
+        );
+    }
+
+    private Vector2 ResolveNonOverlappingOverlayCenter(Vector2 desiredCenter, Vector2 size)
+    {
+        Vector2 clamped = ClampOverlayCenterToScreen(desiredCenter, size);
+        Rect initial = ScreenRectForOverlay(clamped, size);
+        if (!OverlapsPlacedScreenRect(initial))
+        {
+            return clamped;
+        }
+
+        float step = Mathf.Max(10f, size.y * 0.42f);
+        int attempts = Mathf.Max(2, overlapSearchAttempts);
+        for (int ring = 1; ring <= attempts; ring++)
+        {
+            Vector2[] candidates =
+            {
+                clamped + Vector2.up * step * ring,
+                clamped + Vector2.down * step * ring,
+                clamped + Vector2.right * step * ring,
+                clamped + Vector2.left * step * ring,
+            };
+
+            foreach (Vector2 candidate in candidates)
+            {
+                Vector2 resolved = ClampOverlayCenterToScreen(candidate, size);
+                if (!OverlapsPlacedScreenRect(ScreenRectForOverlay(resolved, size)))
+                {
+                    return resolved;
+                }
+            }
+        }
+
+        return clamped;
+    }
+
+    private bool OverlapsPlacedScreenRect(Rect candidate)
+    {
+        foreach (Rect placed in placedScreenRects)
+        {
+            if (candidate.Overlaps(placed))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static Rect ScreenRectForOverlay(Vector2 center, Vector2 size)
+    {
+        return new Rect(
+            center.x - size.x * 0.5f,
+            center.y - size.y * 0.5f,
+            size.x,
+            size.y
         );
     }
 

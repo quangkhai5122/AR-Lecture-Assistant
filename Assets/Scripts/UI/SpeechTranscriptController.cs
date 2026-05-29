@@ -18,25 +18,27 @@ public class SpeechTranscriptController : MonoBehaviour
 {
     [Header("Backend Speech Translation")]
     [SerializeField] private bool useBackendSpeechTranslation = true;
-    [SerializeField] private bool useStreamingSpeech = true;
+    [SerializeField] private bool useStreamingSpeech = false;
+    [SerializeField] private bool useLowLatencySpeechDefaults = true;
     [SerializeField] private bool speechBackendMockMode = false;
     [SerializeField] private HttpPipelineClient httpPipelineClient;
     [SerializeField] private string speechProvider = "google";
     [SerializeField] private string llmProvider = "gemini";
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private int microphoneSampleRateHz = 16000;
-    [SerializeField] private float audioChunkSeconds = 4f;
+    [SerializeField] private float audioChunkSeconds = 1.5f;
+    [SerializeField] private float microphoneStartupTimeoutSeconds = 1f;
     [SerializeField] private int streamingSendIntervalMs = 250;
-    [SerializeField] private float minSpeechRms = 0.006f;
+    [SerializeField] private float minSpeechRms = 0.003f;
 
     [Header("Speech Recognition")]
     [SerializeField] private bool autoStartListening = true;
     [SerializeField] private string recognitionLanguage = "en-US";
-    [SerializeField] private float rollingWindowSeconds = 10f;
-    [SerializeField] private float uiRefreshIntervalSeconds = 0.25f;
+    [SerializeField] private float rollingWindowSeconds = 45f;
+    [SerializeField] private float uiRefreshIntervalSeconds = 0.15f;
     [SerializeField] private float androidRestartDelaySeconds = 0.35f;
     [SerializeField] private bool commitOnlyCompleteSentences = true;
-    [SerializeField] private float sentenceSilenceCommitSeconds = 2.2f;
+    [SerializeField] private float sentenceSilenceCommitSeconds = 0.8f;
     [SerializeField] private bool useMockInEditorOrUnsupported = true;
 
     [Header("Notes")]
@@ -93,6 +95,7 @@ public class SpeechTranscriptController : MonoBehaviour
 
     private void Start()
     {
+        ApplyLowLatencySpeechDefaults();
         notesService = new LectureNotesService(notesFileName);
         BuildUi();
 
@@ -284,6 +287,21 @@ public class SpeechTranscriptController : MonoBehaviour
         nextMockPhraseAt = Time.unscaledTime + 1.6f;
     }
 
+    private void ApplyLowLatencySpeechDefaults()
+    {
+        if (!useLowLatencySpeechDefaults || useStreamingSpeech || speechBackendMockMode)
+        {
+            return;
+        }
+
+        audioChunkSeconds = Mathf.Clamp(audioChunkSeconds, 0.75f, 1.5f);
+        microphoneStartupTimeoutSeconds = Mathf.Clamp(microphoneStartupTimeoutSeconds, 0.2f, 1f);
+        minSpeechRms = Mathf.Min(minSpeechRms, 0.003f);
+        rollingWindowSeconds = Mathf.Max(rollingWindowSeconds, 45f);
+        uiRefreshIntervalSeconds = Mathf.Min(uiRefreshIntervalSeconds, 0.15f);
+        sentenceSilenceCommitSeconds = Mathf.Min(sentenceSilenceCommitSeconds, 0.8f);
+    }
+
     private System.Collections.IEnumerator CaptureStreamingSpeechLoop()
     {
         speechStreamCts = new CancellationTokenSource();
@@ -304,9 +322,10 @@ public class SpeechTranscriptController : MonoBehaviour
             yield break;
         }
 
-        string deviceName = null;
+        string deviceName = ResolveMicrophoneDeviceName();
+        int sampleRateHz = ResolveMicrophoneSampleRate(deviceName);
         int clipLengthSeconds = Mathf.Max(2, Mathf.CeilToInt(audioChunkSeconds * 3f));
-        AudioClip clip = Microphone.Start(deviceName, true, clipLengthSeconds, microphoneSampleRateHz);
+        AudioClip clip = Microphone.Start(deviceName, true, clipLengthSeconds, sampleRateHz);
         int readPosition = 0;
         float sendInterval = Mathf.Max(0.05f, streamingSendIntervalMs / 1000f);
         SetStatus("Streaming Google STT");
@@ -466,33 +485,49 @@ public class SpeechTranscriptController : MonoBehaviour
 
     private System.Collections.IEnumerator CaptureAndTranslateSpeechLoop()
     {
-        string deviceName = null;
-        int chunkLengthSeconds = Mathf.Max(1, Mathf.CeilToInt(audioChunkSeconds));
+        string deviceName = ResolveMicrophoneDeviceName();
+        int sampleRateHz = ResolveMicrophoneSampleRate(deviceName);
+        float captureSeconds = Mathf.Max(0.5f, audioChunkSeconds);
+        int clipLengthSeconds = Mathf.Max(2, Mathf.CeilToInt(captureSeconds) + 1);
 
         while (isListening && useBackendSpeechTranslation)
         {
             AudioClip clip = null;
+            int samplePosition = 0;
             if (!speechBackendMockMode)
             {
-                clip = Microphone.Start(deviceName, false, chunkLengthSeconds, microphoneSampleRateHz);
-                float waitUntil = Time.unscaledTime + 1f;
+                clip = Microphone.Start(deviceName, false, clipLengthSeconds, sampleRateHz);
+                float waitUntil = Time.unscaledTime + Mathf.Max(0.2f, microphoneStartupTimeoutSeconds);
                 while (isListening && Microphone.GetPosition(deviceName) <= 0 && Time.unscaledTime < waitUntil)
                 {
                     yield return null;
                 }
 
-                float stopAt = Time.unscaledTime + Mathf.Clamp(audioChunkSeconds, 0.5f, chunkLengthSeconds);
-                while (isListening && Time.unscaledTime < stopAt)
+                if (isListening && Microphone.GetPosition(deviceName) <= 0)
                 {
+                    SetStatus("Microphone did not start");
+                    if (Microphone.IsRecording(deviceName))
+                    {
+                        Microphone.End(deviceName);
+                    }
+                    yield return new WaitForSeconds(0.5f);
+                    continue;
+                }
+
+                float stopAt = Time.unscaledTime + Mathf.Clamp(captureSeconds, 0.5f, clipLengthSeconds - 0.25f);
+                while (isListening && Time.unscaledTime < stopAt && Microphone.IsRecording(deviceName))
+                {
+                    samplePosition = Microphone.GetPosition(deviceName);
                     yield return null;
                 }
+
+                samplePosition = Mathf.Max(samplePosition, Microphone.GetPosition(deviceName));
             }
             else
             {
                 yield return new WaitForSeconds(Mathf.Max(0.5f, audioChunkSeconds));
             }
 
-            int samplePosition = speechBackendMockMode ? 0 : Microphone.GetPosition(deviceName);
             if (!speechBackendMockMode && Microphone.IsRecording(deviceName))
             {
                 Microphone.End(deviceName);
@@ -522,7 +557,7 @@ public class SpeechTranscriptController : MonoBehaviour
                 }
             }
 
-            Task task = ProcessAudioChunkAsync(samples, channels);
+            Task task = ProcessAudioChunkAsync(samples, channels, sampleRateHz);
             while (!task.IsCompleted)
             {
                 yield return null;
@@ -542,13 +577,13 @@ public class SpeechTranscriptController : MonoBehaviour
         backendSpeechCoroutine = null;
     }
 
-    private async Task ProcessAudioChunkAsync(float[] samples, int channels)
+    private async Task ProcessAudioChunkAsync(float[] samples, int channels, int sampleRateHz)
     {
         string audioBase64 = speechBackendMockMode ? "" : EncodePcm16Base64(samples, channels);
         SpeechTranscribeResponse response = await httpPipelineClient.SendSpeechTranscribeAsync(
             audioBase64,
             "LINEAR16",
-            microphoneSampleRateHz,
+            Mathf.Max(1, sampleRateHz),
             recognitionLanguage,
             speechBackendMockMode,
             speechProvider
@@ -805,13 +840,13 @@ public class SpeechTranscriptController : MonoBehaviour
         }
 
         Transform parent = canvas.transform;
-        toggleButton = CreateButton("TranscriptToggleButton", parent, "Transcript", new Color(0.08f, 0.44f, 0.38f, 0.94f));
+        toggleButton = CreateButton("TranscriptToggleButton", parent, "Transcript", new Color(0.08f, 0.58f, 0.78f, 0.94f));
         RectTransform toggleRect = toggleButton.GetComponent<RectTransform>();
         toggleRect.anchorMin = new Vector2(1f, 1f);
         toggleRect.anchorMax = new Vector2(1f, 1f);
         toggleRect.pivot = new Vector2(1f, 1f);
-        toggleRect.anchoredPosition = new Vector2(-24f, -118f);
-        toggleRect.sizeDelta = new Vector2(210f, 64f);
+        toggleRect.anchoredPosition = new Vector2(-24f, -112f);
+        toggleRect.sizeDelta = new Vector2(220f, 64f);
         toggleButton.onClick.AddListener(ToggleModal);
 
         modalRoot = new GameObject("TranscriptModal");
@@ -823,7 +858,7 @@ public class SpeechTranscriptController : MonoBehaviour
         modalRect.offsetMax = Vector2.zero;
 
         Image modalImage = modalRoot.AddComponent<Image>();
-        modalImage.color = new Color(0.035f, 0.043f, 0.055f, 0.94f);
+        modalImage.color = new Color(0.025f, 0.030f, 0.042f, 0.92f);
         Shadow modalShadow = modalRoot.AddComponent<Shadow>();
         modalShadow.effectColor = new Color(0f, 0f, 0f, 0.36f);
         modalShadow.effectDistance = new Vector2(0f, -5f);
@@ -838,7 +873,8 @@ public class SpeechTranscriptController : MonoBehaviour
 
     private void BuildHeader(Transform parent)
     {
-        TextMeshProUGUI title = CreateText("TranscriptTitle", parent, "Live transcript (last 10s)", 30f, FontStyles.Bold);
+        string titleText = "Live transcript (last " + Mathf.RoundToInt(Mathf.Max(1f, rollingWindowSeconds)) + "s)";
+        TextMeshProUGUI title = CreateText("TranscriptTitle", parent, titleText, 30f, FontStyles.Bold);
         RectTransform titleRect = title.GetComponent<RectTransform>();
         titleRect.anchorMin = new Vector2(0f, 1f);
         titleRect.anchorMax = new Vector2(1f, 1f);
@@ -942,19 +978,19 @@ public class SpeechTranscriptController : MonoBehaviour
         layout.childForceExpandWidth = true;
         layout.childForceExpandHeight = true;
 
-        addToNoteButton = CreateButton("AddTranscriptToNoteButton", rowObject.transform, "Add to note", new Color(0.18f, 0.58f, 0.36f, 0.96f));
+        addToNoteButton = CreateButton("AddTranscriptToNoteButton", rowObject.transform, "Add to note", new Color(0.10f, 0.70f, 0.55f, 0.96f));
         addToNoteButton.onClick.AddListener(AddCurrentTranscriptToNote);
 
-        viewNotesButton = CreateButton("ViewNotesButton", rowObject.transform, "Notes", new Color(0.12f, 0.36f, 0.56f, 0.96f));
+        viewNotesButton = CreateButton("ViewNotesButton", rowObject.transform, "Notes", new Color(0.10f, 0.44f, 0.78f, 0.96f));
         viewNotesButton.onClick.AddListener(ToggleNotesView);
 
-        exportNotesButton = CreateButton("ExportNotesButton", rowObject.transform, "Export", new Color(0.18f, 0.26f, 0.34f, 0.96f));
+        exportNotesButton = CreateButton("ExportNotesButton", rowObject.transform, "Export", new Color(0.13f, 0.16f, 0.22f, 0.96f));
         exportNotesButton.onClick.AddListener(ExportNotes);
 
-        deleteNotesButton = CreateButton("DeleteNotesButton", rowObject.transform, "Delete", new Color(0.56f, 0.18f, 0.18f, 0.96f));
+        deleteNotesButton = CreateButton("DeleteNotesButton", rowObject.transform, "Delete", new Color(0.82f, 0.24f, 0.30f, 0.96f));
         deleteNotesButton.onClick.AddListener(DeleteNotes);
 
-        summarizeButton = CreateButton("SummarizeTranscriptButton", rowObject.transform, "AI summary", new Color(0.38f, 0.32f, 0.62f, 0.72f));
+        summarizeButton = CreateButton("SummarizeTranscriptButton", rowObject.transform, "AI summary", new Color(0.38f, 0.34f, 0.95f, 0.86f));
         summarizeButton.onClick.AddListener(OnSummarizePressed);
         summarizeButton.interactable = true;
     }
@@ -1078,7 +1114,7 @@ public class SpeechTranscriptController : MonoBehaviour
     private void ExportNotes()
     {
         string exportPath = notesService.ExportCopy();
-        SetStatus("Exported notes");
+        SetStatus("Exported to " + exportPath);
         Debug.Log("[SpeechTranscript] Notes exported to " + exportPath);
     }
 
@@ -1365,5 +1401,38 @@ public class SpeechTranscriptController : MonoBehaviour
             .Replace("\n", "\\n")
             .Replace("\r", "\\r")
             .Replace("\t", "\\t");
+    }
+
+    private static string ResolveMicrophoneDeviceName()
+    {
+        string[] devices = Microphone.devices;
+        return devices != null && devices.Length > 0 ? devices[0] : null;
+    }
+
+    private int ResolveMicrophoneSampleRate(string deviceName)
+    {
+        int requested = Mathf.Max(1, microphoneSampleRateHz);
+        if (string.IsNullOrEmpty(deviceName))
+        {
+            return requested;
+        }
+
+        Microphone.GetDeviceCaps(deviceName, out int minFrequency, out int maxFrequency);
+        if (minFrequency == 0 && maxFrequency == 0)
+        {
+            return requested;
+        }
+
+        if (maxFrequency > 0 && requested > maxFrequency)
+        {
+            return maxFrequency;
+        }
+
+        if (minFrequency > 0 && requested < minFrequency)
+        {
+            return minFrequency;
+        }
+
+        return requested;
     }
 }
