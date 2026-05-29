@@ -349,14 +349,43 @@ def test_paddle_detection_parameters_default_to_small_text_mode(monkeypatch):
 
     assert service._paddle_detection_parameters() == {
         "text_det_limit_type": "min",
-        "text_det_limit_side_len": 960,
-        "text_det_box_thresh": 0.45,
+        "text_det_limit_side_len": 1536,
+        "text_det_box_thresh": 0.30,
     }
     assert service._paddle_detection_parameters(legacy=True) == {
         "det_limit_type": "min",
-        "det_limit_side_len": 960,
-        "det_db_box_thresh": 0.45,
+        "det_limit_side_len": 1536,
+        "det_db_box_thresh": 0.30,
     }
+
+def test_ocr_postprocess_merges_same_line_blocks(monkeypatch):
+    monkeypatch.delenv("OCR_MERGE_TEXT_LINES", raising=False)
+    service = OCRService()
+
+    blocks = service._postprocess_blocks(
+        [
+            {"id": "a", "text": "Deep learning", "bbox": [10, 20, 110, 42], "confidence": 0.9},
+            {"id": "b", "text": "uses neural networks.", "bbox": [118, 21, 260, 43], "confidence": 0.8},
+            {"id": "c", "text": "Gradient descent", "bbox": [10, 80, 150, 102], "confidence": 0.95},
+        ],
+        image_width=400,
+        image_height=200,
+    )
+
+    assert blocks == [
+        {
+            "id": "ocr_1",
+            "text": "Deep learning uses neural networks.",
+            "bbox": [10, 20, 260, 43],
+            "confidence": 0.85,
+        },
+        {
+            "id": "ocr_2",
+            "text": "Gradient descent",
+            "bbox": [10, 80, 150, 102],
+            "confidence": 0.95,
+        },
+    ]
 
 
 def test_paddleocr_unavailable_falls_back_to_tesseract(monkeypatch):

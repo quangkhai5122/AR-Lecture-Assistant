@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from services.errors import PipelineError
 
@@ -85,6 +85,8 @@ class OCRService:
                     code=fallback_exc.code,
                 ) from fallback_exc
             provider_used = fallback_provider
+
+        blocks = self._postprocess_blocks(blocks, width, height)
 
         if not blocks:
             warnings.append(f"OCR provider '{provider_used}' returned no text blocks.")
@@ -293,12 +295,12 @@ class OCRService:
         )
 
     def _paddle_detection_parameters(self, legacy: bool = False) -> dict[str, Any]:
-        limit_side_len = max(0, int(self._safe_float(os.getenv("PADDLEOCR_DET_LIMIT_SIDE_LEN"), default=960)))
+        limit_side_len = max(0, int(self._safe_float(os.getenv("PADDLEOCR_DET_LIMIT_SIDE_LEN"), default=1536)))
         limit_type = (os.getenv("PADDLEOCR_DET_LIMIT_TYPE", "min") or "min").strip().lower()
         if limit_type not in {"min", "max"}:
             limit_type = "min"
 
-        box_thresh = self._safe_float(os.getenv("PADDLEOCR_DET_BOX_THRESH"), default=0.45)
+        box_thresh = self._safe_float(os.getenv("PADDLEOCR_DET_BOX_THRESH"), default=0.30)
         unclip_raw = os.getenv("PADDLEOCR_DET_UNCLIP_RATIO")
 
         if legacy:
@@ -539,7 +541,7 @@ class OCRService:
         return blocks
 
     def _min_confidence(self) -> float:
-        return max(0.0, min(1.0, self._safe_float(os.getenv("OCR_MIN_CONFIDENCE"), default=0.30)))
+        return max(0.0, min(1.0, self._safe_float(os.getenv("OCR_MIN_CONFIDENCE"), default=0.22)))
 
     def _prepare_ocr_image(self, image: Image.Image) -> tuple[Image.Image, float, float]:
         if os.getenv("OCR_PREPROCESS_ENABLED", "1") != "1":
@@ -550,8 +552,8 @@ class OCRService:
         if width <= 0 or height <= 0 or longest_side <= 0:
             return image, 1.0, 1.0
 
-        target_long_side = max(0, int(self._safe_float(os.getenv("OCR_UPSCALE_LONG_SIDE"), default=2200)))
-        max_upscale = max(1.0, self._safe_float(os.getenv("OCR_MAX_UPSCALE"), default=2.5))
+        target_long_side = max(0, int(self._safe_float(os.getenv("OCR_UPSCALE_LONG_SIDE"), default=3200)))
+        max_upscale = max(1.0, self._safe_float(os.getenv("OCR_MAX_UPSCALE"), default=4.0))
         scale = 1.0
         if target_long_side > longest_side:
             scale = min(max_upscale, target_long_side / float(longest_side))
@@ -564,19 +566,165 @@ class OCRService:
             )
             prepared = prepared.resize(target_size, Image.Resampling.LANCZOS)
 
-        contrast = self._safe_float(os.getenv("OCR_CONTRAST"), default=1.15)
+        if os.getenv("OCR_GRAYSCALE", "1") == "1":
+            prepared = ImageOps.grayscale(prepared).convert("RGB")
+
+        if os.getenv("OCR_AUTOCONTRAST", "1") == "1":
+            cutoff = max(0.0, min(10.0, self._safe_float(os.getenv("OCR_AUTOCONTRAST_CUTOFF"), default=1.0)))
+            prepared = ImageOps.autocontrast(prepared, cutoff=cutoff)
+
+        contrast = self._safe_float(os.getenv("OCR_CONTRAST"), default=1.35)
         if contrast > 0 and abs(contrast - 1.0) > 0.01:
             prepared = ImageEnhance.Contrast(prepared).enhance(contrast)
 
-        sharpness = self._safe_float(os.getenv("OCR_SHARPNESS"), default=1.25)
+        sharpness = self._safe_float(os.getenv("OCR_SHARPNESS"), default=1.45)
         if sharpness > 0 and abs(sharpness - 1.0) > 0.01:
             prepared = ImageEnhance.Sharpness(prepared).enhance(sharpness)
 
         if os.getenv("OCR_UNSHARP_MASK", "1") == "1":
-            prepared = prepared.filter(ImageFilter.UnsharpMask(radius=1.2, percent=120, threshold=3))
+            radius = self._safe_float(os.getenv("OCR_UNSHARP_RADIUS"), default=1.1)
+            percent = int(self._safe_float(os.getenv("OCR_UNSHARP_PERCENT"), default=160))
+            threshold = int(self._safe_float(os.getenv("OCR_UNSHARP_THRESHOLD"), default=2))
+            prepared = prepared.filter(ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=threshold))
 
         prepared_width, prepared_height = prepared.size
         return prepared, prepared_width / float(width), prepared_height / float(height)
+
+    def _postprocess_blocks(
+        self,
+        blocks: list[dict[str, Any]],
+        image_width: int,
+        image_height: int,
+    ) -> list[dict[str, Any]]:
+        if not blocks:
+            return []
+
+        cleaned = self._clean_ocr_blocks(blocks, image_width, image_height)
+        if os.getenv("OCR_MERGE_TEXT_LINES", "1") != "1" or len(cleaned) <= 1:
+            return self._renumber_blocks(cleaned)
+
+        return self._renumber_blocks(self._merge_same_line_blocks(cleaned, image_width))
+
+    def _clean_ocr_blocks(
+        self,
+        blocks: list[dict[str, Any]],
+        image_width: int,
+        image_height: int,
+    ) -> list[dict[str, Any]]:
+        cleaned: list[dict[str, Any]] = []
+        min_area_ratio = max(0.0, self._safe_float(os.getenv("OCR_MIN_BLOCK_AREA_RATIO"), default=0.0))
+        image_area = max(1.0, float(image_width * image_height))
+
+        for block in blocks:
+            text = " ".join(str(block.get("text", "")).split())
+            bbox = block.get("bbox")
+            if not text or not isinstance(bbox, list) or len(bbox) < 4:
+                continue
+
+            try:
+                x1, y1, x2, y2 = [float(value) for value in bbox[:4]]
+            except (TypeError, ValueError):
+                continue
+
+            left = self._clamp(round(min(x1, x2)), 0, image_width)
+            top = self._clamp(round(min(y1, y2)), 0, image_height)
+            right = self._clamp(round(max(x1, x2)), 0, image_width)
+            bottom = self._clamp(round(max(y1, y2)), 0, image_height)
+            x1, y1, x2, y2 = left, top, right, bottom
+            if x2 <= x1 or y2 <= y1:
+                continue
+            if min_area_ratio > 0 and ((x2 - x1) * (y2 - y1)) / image_area < min_area_ratio:
+                continue
+
+            cleaned.append({
+                "id": str(block.get("id") or f"ocr_{len(cleaned) + 1}"),
+                "text": text,
+                "bbox": [x1, y1, x2, y2],
+                "confidence": max(0.0, min(1.0, self._safe_float(block.get("confidence"), default=0.0))),
+            })
+
+        cleaned.sort(key=lambda item: (item["bbox"][1], item["bbox"][0]))
+        return cleaned
+
+    def _merge_same_line_blocks(self, blocks: list[dict[str, Any]], image_width: int) -> list[dict[str, Any]]:
+        lines: list[list[dict[str, Any]]] = []
+        for block in blocks:
+            best_line: list[dict[str, Any]] | None = None
+            best_distance = float("inf")
+            for line in lines:
+                center_distance = [float("inf")]
+                if self._can_join_line(block, line, image_width, center_distance):
+                    if center_distance[0] < best_distance:
+                        best_distance = center_distance[0]
+                        best_line = line
+
+            if best_line is None:
+                best_line = []
+                lines.append(best_line)
+
+            best_line.append(block)
+            best_line.sort(key=lambda item: item["bbox"][0])
+
+        merged = [self._merge_line(line) for line in lines if line]
+        merged.sort(key=lambda item: (item["bbox"][1], item["bbox"][0]))
+        return merged
+
+    def _can_join_line(
+        self,
+        block: dict[str, Any],
+        line: list[dict[str, Any]],
+        image_width: int,
+        center_distance_out: list[float],
+    ) -> bool:
+        line_bbox = self._union_bbox([item["bbox"] for item in line])
+        bbox = block["bbox"]
+        line_height = max(1.0, line_bbox[3] - line_bbox[1])
+        block_height = max(1.0, bbox[3] - bbox[1])
+        min_height = max(1.0, min(line_height, block_height))
+
+        vertical_overlap = max(0.0, min(line_bbox[3], bbox[3]) - max(line_bbox[1], bbox[1]))
+        overlap_ratio = vertical_overlap / min_height
+        center_distance = abs(((line_bbox[1] + line_bbox[3]) * 0.5) - ((bbox[1] + bbox[3]) * 0.5))
+        center_distance_out[0] = center_distance
+
+        horizontal_gap = 0.0
+        if bbox[0] > line_bbox[2]:
+            horizontal_gap = bbox[0] - line_bbox[2]
+        elif line_bbox[0] > bbox[2]:
+            horizontal_gap = line_bbox[0] - bbox[2]
+
+        max_gap_ratio = self._safe_float(os.getenv("OCR_LINE_MERGE_MAX_GAP_RATIO"), default=0.035)
+        max_gap = max(image_width * max_gap_ratio, max(line_height, block_height) * 3.2)
+        return (overlap_ratio >= 0.42 or center_distance <= max(line_height, block_height) * 0.62) and horizontal_gap <= max_gap
+
+    def _merge_line(self, line: list[dict[str, Any]]) -> dict[str, Any]:
+        line.sort(key=lambda item: item["bbox"][0])
+        bbox = self._union_bbox([item["bbox"] for item in line])
+        text = " ".join(str(item["text"]).strip() for item in line if str(item.get("text", "")).strip())
+        confidences = [float(item.get("confidence", 0.0)) for item in line]
+        confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        return {
+            "id": str(line[0].get("id") or "ocr_1"),
+            "text": text,
+            "bbox": bbox,
+            "confidence": round(max(0.0, min(1.0, confidence)), 4),
+        }
+
+    def _union_bbox(self, boxes: list[list[int]]) -> list[int]:
+        return [
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        ]
+
+    def _renumber_blocks(self, blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        renumbered: list[dict[str, Any]] = []
+        for index, block in enumerate(blocks, start=1):
+            item = dict(block)
+            item["id"] = f"ocr_{index}"
+            renumbered.append(item)
+        return renumbered
 
     def _safe_float(self, value: Any, default: float) -> float:
         try:
