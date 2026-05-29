@@ -27,7 +27,12 @@ public sealed class LectureNotesService
 
     public void AppendTranscript(string transcript)
     {
-        if (string.IsNullOrWhiteSpace(transcript)) return;
+        AppendSection(string.Empty, transcript);
+    }
+
+    public void AppendSection(string title, string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return;
 
         string directory = Path.GetDirectoryName(notesPath);
         if (!string.IsNullOrEmpty(directory))
@@ -37,7 +42,11 @@ public sealed class LectureNotesService
 
         var builder = new StringBuilder();
         builder.AppendLine("## " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-        builder.AppendLine(transcript.Trim());
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            builder.AppendLine("### " + title.Trim());
+        }
+        builder.AppendLine(content.Trim());
         builder.AppendLine();
 
         File.AppendAllText(notesPath, builder.ToString(), Encoding.UTF8);

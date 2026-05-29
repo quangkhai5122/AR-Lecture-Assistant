@@ -575,6 +575,20 @@ def test_speech_summarize_endpoint_mock_returns_summary():
     assert data["provider"] == {"llm": "mock"}
     assert data["mock_used"] is True
 
+def test_speech_ask_text_endpoint_mock_returns_answer():
+    client = app.test_client()
+    response = client.post("/speech/ask-text", json={
+        "mock": True,
+        "text": "Mang nong so voi mang sau",
+        "target_language": "vi",
+    })
+    data = response.get_json()
+    assert response.status_code == 200
+    assert data["source_text"] == "Mang nong so voi mang sau"
+    assert data["answer_text"]
+    assert data["provider"] == {"llm": "mock"}
+    assert data["mock_used"] is True
+
 def test_speech_translate_text_gemini_provider_uses_context(monkeypatch):
     calls = []
 

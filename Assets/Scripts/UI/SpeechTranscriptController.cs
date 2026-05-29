@@ -1098,9 +1098,32 @@ public class SpeechTranscriptController : MonoBehaviour
             return;
         }
 
+        EnsureNotesService();
         notesService.AppendTranscript(transcript);
         SetStatus("Added transcript to notes");
         Debug.Log("[SpeechTranscript] Note saved to " + notesService.NotesPath);
+    }
+
+    public void AddSelectedTranslationToNote(string selectedText)
+    {
+        if (string.IsNullOrWhiteSpace(selectedText))
+        {
+            SetStatus("No translation selected");
+            return;
+        }
+
+        EnsureNotesService();
+        notesService.AppendSection("Slide translation", selectedText);
+        SetStatus("Added selected translation to notes");
+        Debug.Log("[SpeechTranscript] Selected translation saved to " + notesService.NotesPath);
+    }
+
+    private void EnsureNotesService()
+    {
+        if (notesService == null)
+        {
+            notesService = new LectureNotesService(notesFileName);
+        }
     }
 
     private void ToggleNotesView()

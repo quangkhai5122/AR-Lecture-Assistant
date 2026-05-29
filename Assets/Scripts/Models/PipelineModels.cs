@@ -81,6 +81,18 @@ public class SpeechSummaryResponse
 }
 
 [Serializable]
+public class SpeechAskTextResponse
+{
+    public string source_text;
+    public string answer_text;
+    public string target_language;
+    public SpeechProvider provider;
+    public string model;
+    public bool mock_used;
+    public string[] warnings;
+}
+
+[Serializable]
 public class SpeechStreamMessage
 {
     public string type;

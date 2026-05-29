@@ -283,6 +283,29 @@ def speech_summarize():
     })
 
 
+@app.post("/speech/ask-text")
+def speech_ask_text():
+    payload = _json_payload()
+    _validate_ask_text_payload(payload)
+
+    result = gemini_service.ask_about_text(
+        text=payload.get("text", ""),
+        target_language=payload.get("target_language", "vi"),
+        force_mock=bool(payload.get("mock", False)),
+        provider=payload.get("llm_provider"),
+    )
+
+    return jsonify({
+        "source_text": payload.get("text", ""),
+        "answer_text": result.text,
+        "target_language": payload.get("target_language", "vi"),
+        "provider": {"llm": result.provider},
+        "model": result.model,
+        "mock_used": result.mock_used,
+        "warnings": result.warnings,
+    })
+
+
 def _json_payload() -> dict[str, Any]:
     payload = request.get_json(silent=False)
     if not isinstance(payload, dict):
@@ -360,6 +383,17 @@ def _validate_summary_payload(payload: dict[str, Any]) -> None:
         raise PipelineError("Field 'target_language' must be a string.")
     if payload.get("llm_provider"):
         _require_string(payload, "llm_provider")
+
+
+def _validate_ask_text_payload(payload: dict[str, Any]) -> None:
+    _require_string(payload, "text")
+    if "mock" in payload and not isinstance(payload["mock"], bool):
+        raise PipelineError("Field 'mock' must be a boolean.")
+    if "target_language" in payload and not isinstance(payload["target_language"], str):
+        raise PipelineError("Field 'target_language' must be a string.")
+    if payload.get("llm_provider"):
+        _require_string(payload, "llm_provider")
+
 
 def _validate_context(payload: dict[str, Any]) -> None:
     context = payload.get("context", [])

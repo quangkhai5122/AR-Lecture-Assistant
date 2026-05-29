@@ -22,6 +22,7 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
     public string speechTranslateTextPath = "/speech/translate-text";
     public string speechStreamPath = "/speech/stream";
     public string speechSummaryPath = "/speech/summarize";
+    public string speechAskTextPath = "/speech/ask-text";
     public string healthPath = "/health";
     public int timeoutSeconds = 20;
 
@@ -185,6 +186,26 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
         if (response == null)
         {
             throw new Exception("Cannot parse backend speech summary JSON.");
+        }
+
+        return response;
+    }
+
+    public async Task<SpeechAskTextResponse> SendSpeechAskTextAsync(
+        string text,
+        string targetLanguage,
+        bool mock,
+        string llmProvider = ""
+    )
+    {
+        string json = await SendJsonAsync(
+            BuildUrl(speechAskTextPath),
+            BuildSpeechAskTextJson(text, targetLanguage, mock, llmProvider)
+        );
+        SpeechAskTextResponse response = JsonUtility.FromJson<SpeechAskTextResponse>(json);
+        if (response == null)
+        {
+            throw new Exception("Cannot parse backend Gemini answer JSON.");
         }
 
         return response;
@@ -412,6 +433,26 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
     }
 
     private string BuildSpeechSummaryJson(
+        string text,
+        string targetLanguage,
+        bool mock,
+        string llmProvider
+    )
+    {
+        var builder = new StringBuilder();
+        builder.Append("{");
+        builder.AppendFormat("\"text\":\"{0}\",", EscapeJsonString(text ?? ""));
+        builder.AppendFormat("\"target_language\":\"{0}\",", EscapeJsonString(string.IsNullOrWhiteSpace(targetLanguage) ? "vi" : targetLanguage));
+        builder.AppendFormat("\"mock\":{0}", mock ? "true" : "false");
+        if (!string.IsNullOrWhiteSpace(llmProvider))
+        {
+            builder.AppendFormat(",\"llm_provider\":\"{0}\"", EscapeJsonString(llmProvider));
+        }
+        builder.Append("}");
+        return builder.ToString();
+    }
+
+    private string BuildSpeechAskTextJson(
         string text,
         string targetLanguage,
         bool mock,

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Unity.Collections;
 using UnityEngine;
+using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 
@@ -49,8 +50,13 @@ public class FrameCaptureService : MonoBehaviour
     [Header("Upload Image")]
     [SerializeField] private FrameImageEncoding imageEncoding = FrameImageEncoding.Jpeg;
 
-    [Tooltip("Khi phải fallback sang screenshot, ẩn UI screen-space trong đúng frame capture để OCR không đọc nhầm nút/overlay.")]
-    [SerializeField] private bool hideScreenSpaceCanvasesForScreenshot = true;
+    [Tooltip("Hide screen-space UI while taking screenshots. Enabling this can cause visible blink during Translate.")]
+    [SerializeField] private bool hideScreenSpaceCanvasesForScreenshot = false;
+
+    [Tooltip("Mask visible app UI in the captured screenshot before sending OCR. This avoids UI text without hiding canvases on screen.")]
+    [SerializeField] private bool maskScreenSpaceUiForScreenshot = true;
+
+    [SerializeField] private Color screenshotUiMaskColor = new Color(0.54f, 0.56f, 0.58f, 1f);
 
     [Range(10, 95)]
     public int jpegQuality = 92;
@@ -79,8 +85,7 @@ public class FrameCaptureService : MonoBehaviour
 
     private IEnumerator CaptureCoroutine(TaskCompletionSource<CapturedFrame> tcs)
     {
-        TryApplyBestCameraConfiguration();
-
+        // Do not change AR camera configuration here; it can restart the camera feed during Translate.
         // Bước 1: Thử AR Camera Raw (không cần WaitForEndOfFrame)
         if (captureSource != FrameCaptureSource.Screenshot &&
             TryCaptureARCameraRaw(out CapturedFrame cameraFrame))
@@ -96,6 +101,9 @@ public class FrameCaptureService : MonoBehaviour
         }
 
         // Bước 2: Screenshot — BẮT BUỘC phải đợi WaitForEndOfFrame trên Android
+        List<Rect> uiMaskRects = !hideScreenSpaceCanvasesForScreenshot && maskScreenSpaceUiForScreenshot
+            ? CollectScreenSpaceUiRects()
+            : null;
         List<Canvas> hiddenCanvases = hideScreenSpaceCanvasesForScreenshot
             ? DisableScreenSpaceCanvasesForCapture()
             : null;
@@ -103,7 +111,7 @@ public class FrameCaptureService : MonoBehaviour
 
         try
         {
-            CapturedFrame frame = CaptureScreenshotFrame();
+            CapturedFrame frame = CaptureScreenshotFrame(uiMaskRects);
             tcs.TrySetResult(frame);
         }
         catch (Exception)
@@ -191,7 +199,7 @@ public class FrameCaptureService : MonoBehaviour
         }
     }
 
-    private CapturedFrame CaptureScreenshotFrame()
+    private CapturedFrame CaptureScreenshotFrame(List<Rect> uiMaskRects)
     {
         Texture2D capturedTexture = ScreenCapture.CaptureScreenshotAsTexture();
         if (capturedTexture == null)
@@ -199,6 +207,7 @@ public class FrameCaptureService : MonoBehaviour
             throw new InvalidOperationException("Screenshot returned null.");
         }
 
+        MaskScreenshotRects(capturedTexture, uiMaskRects);
         Texture2D uploadTexture = ResizeIfNeeded(capturedTexture);
         try
         {
@@ -319,6 +328,125 @@ public class FrameCaptureService : MonoBehaviour
         return imageEncoding == FrameImageEncoding.Png
             ? texture.EncodeToPNG()
             : texture.EncodeToJPG(jpegQuality);
+    }
+
+    private List<Rect> CollectScreenSpaceUiRects()
+    {
+        Canvas[] canvases = FindObjectsOfType<Canvas>();
+        var rects = new List<Rect>();
+        foreach (Canvas canvas in canvases)
+        {
+            if (canvas == null ||
+                !canvas.enabled ||
+                !canvas.gameObject.activeInHierarchy ||
+                canvas.renderMode == RenderMode.WorldSpace)
+            {
+                continue;
+            }
+
+            Camera canvasCamera = canvas.renderMode == RenderMode.ScreenSpaceOverlay
+                ? null
+                : canvas.worldCamera;
+
+            Graphic[] graphics = canvas.GetComponentsInChildren<Graphic>(false);
+            foreach (Graphic graphic in graphics)
+            {
+                if (graphic == null ||
+                    !graphic.enabled ||
+                    !graphic.gameObject.activeInHierarchy ||
+                    graphic.canvasRenderer.GetAlpha() <= 0.01f ||
+                    graphic.color.a <= 0.01f)
+                {
+                    continue;
+                }
+
+                RectTransform rectTransform = graphic.rectTransform;
+                if (rectTransform == null)
+                {
+                    continue;
+                }
+
+                Rect screenRect = GetScreenRect(rectTransform, canvasCamera);
+                if (screenRect.width <= 1f || screenRect.height <= 1f)
+                {
+                    continue;
+                }
+
+                rects.Add(ClampScreenRect(screenRect));
+            }
+        }
+
+        return rects;
+    }
+
+    private Rect GetScreenRect(RectTransform rectTransform, Camera canvasCamera)
+    {
+        Vector3[] corners = new Vector3[4];
+        rectTransform.GetWorldCorners(corners);
+
+        float minX = float.PositiveInfinity;
+        float minY = float.PositiveInfinity;
+        float maxX = float.NegativeInfinity;
+        float maxY = float.NegativeInfinity;
+        for (int i = 0; i < corners.Length; i++)
+        {
+            Vector2 screenPoint = RectTransformUtility.WorldToScreenPoint(canvasCamera, corners[i]);
+            minX = Mathf.Min(minX, screenPoint.x);
+            minY = Mathf.Min(minY, screenPoint.y);
+            maxX = Mathf.Max(maxX, screenPoint.x);
+            maxY = Mathf.Max(maxY, screenPoint.y);
+        }
+
+        return Rect.MinMaxRect(minX, minY, maxX, maxY);
+    }
+
+    private Rect ClampScreenRect(Rect rect)
+    {
+        float minX = Mathf.Clamp(Mathf.Floor(rect.xMin), 0f, Screen.width);
+        float minY = Mathf.Clamp(Mathf.Floor(rect.yMin), 0f, Screen.height);
+        float maxX = Mathf.Clamp(Mathf.Ceil(rect.xMax), 0f, Screen.width);
+        float maxY = Mathf.Clamp(Mathf.Ceil(rect.yMax), 0f, Screen.height);
+        return Rect.MinMaxRect(minX, minY, maxX, maxY);
+    }
+
+    private void MaskScreenshotRects(Texture2D texture, List<Rect> screenRects)
+    {
+        if (texture == null || screenRects == null || screenRects.Count == 0)
+        {
+            return;
+        }
+
+        float scaleX = texture.width / Mathf.Max(1f, Screen.width);
+        float scaleY = texture.height / Mathf.Max(1f, Screen.height);
+        Color[] fillPixels = null;
+        int fillPixelCount = 0;
+
+        foreach (Rect screenRect in screenRects)
+        {
+            int x = Mathf.Clamp(Mathf.FloorToInt(screenRect.xMin * scaleX), 0, texture.width);
+            int y = Mathf.Clamp(Mathf.FloorToInt(screenRect.yMin * scaleY), 0, texture.height);
+            int width = Mathf.Clamp(Mathf.CeilToInt(screenRect.width * scaleX), 0, texture.width - x);
+            int height = Mathf.Clamp(Mathf.CeilToInt(screenRect.height * scaleY), 0, texture.height - y);
+            if (width <= 0 || height <= 0)
+            {
+                continue;
+            }
+
+            int requiredPixels = width * height;
+            if (fillPixels == null || fillPixelCount != requiredPixels)
+            {
+                fillPixels = new Color[requiredPixels];
+                for (int i = 0; i < fillPixels.Length; i++)
+                {
+                    fillPixels[i] = screenshotUiMaskColor;
+                }
+                fillPixelCount = requiredPixels;
+            }
+
+            texture.SetPixels(x, y, width, height, fillPixels);
+        }
+
+        texture.Apply(false);
     }
 
     private List<Canvas> DisableScreenSpaceCanvasesForCapture()

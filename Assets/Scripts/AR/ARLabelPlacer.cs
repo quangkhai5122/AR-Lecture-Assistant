@@ -1,4 +1,5 @@
 // ARLabelPlacer.cs — Hỗ trợ multi-label
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
@@ -15,6 +16,14 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private ARAnchorPlacer anchorPlacer;
     [SerializeField] private ARRaycastController raycastController;
     [SerializeField] private Transform subtitleContainer;     // Parent cho subtitle
+
+    [Header("Selection Actions")]
+    [SerializeField] private SpeechTranscriptController transcriptController;
+    [SerializeField] private HttpPipelineClient httpPipelineClient;
+    [SerializeField] private string notesFileName = "lecture_notes.md";
+    [SerializeField] private string targetLanguage = "vi";
+    [SerializeField] private string llmProvider = "gemini";
+    [SerializeField] private bool geminiMockMode = false;
 
     [Header("Label readability")]
     [SerializeField] private float minScreenSeparationPixels = 96f;
@@ -44,6 +53,10 @@ public class ARLabelPlacer : MonoBehaviour
     private readonly List<Rect> placedScreenRects = new List<Rect>();
     private GameObject currentSubtitle;
     private Canvas screenOverlayCanvas;
+    private GameObject selectedActionMenu;
+    private GameObject geminiAnswerPanel;
+    private TextMeshProUGUI geminiAnswerText;
+    private LectureNotesService fallbackNotesService;
 
     // Cache pose plane cuối cùng — dùng làm fallback khi raycast miss
     private Pose? cachedPlanePose = null;
@@ -556,7 +569,21 @@ public class ARLabelPlacer : MonoBehaviour
 
         Image background = panel.AddComponent<Image>();
         background.color = lensOverlayBackgroundColor;
-        background.raycastTarget = false;
+        background.raycastTarget = true;
+
+        Button button = panel.AddComponent<Button>();
+        button.targetGraphic = background;
+        ColorBlock colors = button.colors;
+        colors.normalColor = lensOverlayBackgroundColor;
+        colors.highlightedColor = Color.Lerp(lensOverlayBackgroundColor, Color.white, 0.10f);
+        colors.pressedColor = Color.Lerp(lensOverlayBackgroundColor, Color.black, 0.12f);
+        colors.selectedColor = colors.highlightedColor;
+        colors.disabledColor = lensOverlayBackgroundColor;
+        colors.colorMultiplier = 1f;
+        button.colors = colors;
+
+        string selectedText = group.Text.Trim();
+        button.onClick.AddListener(() => ShowTranslationActionMenu(selectedText, overlayCenter));
 
         GameObject textObject = new GameObject("TranslatedText");
         textObject.transform.SetParent(panel.transform, false);
@@ -594,8 +621,281 @@ public class ARLabelPlacer : MonoBehaviour
         CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
         scaler.scaleFactor = 1f;
+        canvasObject.AddComponent<GraphicRaycaster>();
 
         return screenOverlayCanvas;
+    }
+
+    private void ShowTranslationActionMenu(string selectedText, Vector2 screenPoint)
+    {
+        if (string.IsNullOrWhiteSpace(selectedText)) return;
+
+        HideTranslationActionMenu();
+        Canvas canvas = EnsureScreenOverlayCanvas();
+        if (canvas == null) return;
+
+        selectedActionMenu = new GameObject("TranslationActionMenu");
+        selectedActionMenu.transform.SetParent(canvas.transform, false);
+
+        RectTransform rect = selectedActionMenu.AddComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.zero;
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        Vector2 menuSize = new Vector2(Mathf.Min(380f, Screen.width * 0.82f), 88f);
+        rect.sizeDelta = menuSize;
+        float verticalOffset = screenPoint.y > Screen.height * 0.55f ? -70f : 70f;
+        rect.anchoredPosition = ClampOverlayCenter(screenPoint + new Vector2(0f, verticalOffset), menuSize);
+
+        Image background = selectedActionMenu.AddComponent<Image>();
+        background.color = new Color(0.025f, 0.030f, 0.040f, 0.96f);
+
+        Shadow shadow = selectedActionMenu.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.34f);
+        shadow.effectDistance = new Vector2(0f, -3f);
+
+        HorizontalLayoutGroup layout = selectedActionMenu.AddComponent<HorizontalLayoutGroup>();
+        layout.padding = new RectOffset(10, 10, 10, 10);
+        layout.spacing = 10f;
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = true;
+        layout.childForceExpandHeight = true;
+
+        Button addButton = CreateOverlayActionButton(
+            "AddSelectedTranslationToNotes",
+            selectedActionMenu.transform,
+            "Add notes",
+            new Color(0.10f, 0.70f, 0.55f, 0.98f)
+        );
+        addButton.onClick.AddListener(() => AddSelectedTranslationToNotes(selectedText));
+
+        Button askButton = CreateOverlayActionButton(
+            "AskGeminiAboutTranslation",
+            selectedActionMenu.transform,
+            "Ask Gemini",
+            new Color(0.38f, 0.34f, 0.95f, 0.98f)
+        );
+        askButton.onClick.AddListener(() => AskGeminiAboutSelectedText(selectedText));
+    }
+
+    private Button CreateOverlayActionButton(string name, Transform parent, string label, Color color)
+    {
+        GameObject buttonObject = new GameObject(name);
+        buttonObject.transform.SetParent(parent, false);
+        RectTransform rect = buttonObject.AddComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(160f, 56f);
+
+        Image image = buttonObject.AddComponent<Image>();
+        image.color = color;
+
+        Button button = buttonObject.AddComponent<Button>();
+        button.targetGraphic = image;
+
+        ColorBlock colors = button.colors;
+        colors.normalColor = color;
+        colors.highlightedColor = Color.Lerp(color, Color.white, 0.14f);
+        colors.pressedColor = Color.Lerp(color, Color.black, 0.14f);
+        colors.selectedColor = colors.highlightedColor;
+        colors.disabledColor = new Color(0.16f, 0.17f, 0.2f, 0.54f);
+        colors.colorMultiplier = 1f;
+        button.colors = colors;
+
+        LayoutElement layout = buttonObject.AddComponent<LayoutElement>();
+        layout.minHeight = 56f;
+
+        GameObject labelObject = new GameObject("Label");
+        labelObject.transform.SetParent(buttonObject.transform, false);
+        RectTransform labelRect = labelObject.AddComponent<RectTransform>();
+        labelRect.anchorMin = Vector2.zero;
+        labelRect.anchorMax = Vector2.one;
+        labelRect.offsetMin = new Vector2(8f, 4f);
+        labelRect.offsetMax = new Vector2(-8f, -4f);
+
+        TextMeshProUGUI text = labelObject.AddComponent<TextMeshProUGUI>();
+        text.text = label;
+        text.color = Color.white;
+        text.fontStyle = FontStyles.Bold;
+        text.fontSize = 20f;
+        text.enableAutoSizing = true;
+        text.fontSizeMin = 12f;
+        text.fontSizeMax = 20f;
+        text.alignment = TextAlignmentOptions.Center;
+        text.overflowMode = TextOverflowModes.Ellipsis;
+        text.raycastTarget = false;
+
+        return button;
+    }
+
+    private void AddSelectedTranslationToNotes(string selectedText)
+    {
+        HideTranslationActionMenu();
+        if (string.IsNullOrWhiteSpace(selectedText)) return;
+
+        if (transcriptController == null)
+        {
+            transcriptController = FindAnyObjectByType<SpeechTranscriptController>();
+        }
+
+        if (transcriptController != null)
+        {
+            transcriptController.AddSelectedTranslationToNote(selectedText);
+        }
+        else
+        {
+            if (fallbackNotesService == null)
+            {
+                fallbackNotesService = new LectureNotesService(notesFileName);
+            }
+
+            fallbackNotesService.AppendSection("Slide translation", selectedText);
+            Debug.Log("[ARLabelPlacer] Selected translation saved to " + fallbackNotesService.NotesPath);
+        }
+
+        ShowGeminiAnswerPanel("Saved to notes", selectedText);
+    }
+
+    private async void AskGeminiAboutSelectedText(string selectedText)
+    {
+        HideTranslationActionMenu();
+        if (string.IsNullOrWhiteSpace(selectedText)) return;
+
+        ShowGeminiAnswerPanel("Gemini", "Analyzing selected line...");
+
+        try
+        {
+            HttpPipelineClient client = ResolveHttpPipelineClient();
+            SpeechAskTextResponse response = await client.SendSpeechAskTextAsync(
+                selectedText,
+                targetLanguage,
+                geminiMockMode,
+                llmProvider
+            );
+
+            string answer = response != null ? response.answer_text : string.Empty;
+            ShowGeminiAnswerPanel("Gemini", string.IsNullOrWhiteSpace(answer) ? "No answer returned." : answer);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[ARLabelPlacer] Ask Gemini failed: " + ex.Message);
+            ShowGeminiAnswerPanel("Gemini error", ex.Message);
+        }
+    }
+
+    private HttpPipelineClient ResolveHttpPipelineClient()
+    {
+        if (httpPipelineClient == null)
+        {
+            httpPipelineClient = FindAnyObjectByType<HttpPipelineClient>();
+        }
+
+        if (httpPipelineClient == null)
+        {
+            httpPipelineClient = gameObject.AddComponent<HttpPipelineClient>();
+        }
+
+        return httpPipelineClient;
+    }
+
+    private void ShowGeminiAnswerPanel(string title, string body)
+    {
+        Canvas canvas = EnsureScreenOverlayCanvas();
+        if (canvas == null) return;
+
+        if (geminiAnswerPanel == null)
+        {
+            geminiAnswerPanel = new GameObject("TranslationGeminiAnswerPanel");
+            geminiAnswerPanel.transform.SetParent(canvas.transform, false);
+
+            RectTransform rect = geminiAnswerPanel.AddComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0.06f, 0.08f);
+            rect.anchorMax = new Vector2(0.94f, 0.36f);
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+
+            Image background = geminiAnswerPanel.AddComponent<Image>();
+            background.color = new Color(0.025f, 0.030f, 0.040f, 0.94f);
+
+            Shadow shadow = geminiAnswerPanel.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0f, 0f, 0f, 0.38f);
+            shadow.effectDistance = new Vector2(0f, -4f);
+
+            geminiAnswerText = CreateAnswerPanelText(geminiAnswerPanel.transform);
+
+            Button closeButton = CreateOverlayActionButton(
+                "CloseTranslationGeminiAnswer",
+                geminiAnswerPanel.transform,
+                "X",
+                new Color(0.16f, 0.18f, 0.22f, 0.96f)
+            );
+            RectTransform closeRect = closeButton.GetComponent<RectTransform>();
+            closeRect.anchorMin = new Vector2(1f, 1f);
+            closeRect.anchorMax = new Vector2(1f, 1f);
+            closeRect.pivot = new Vector2(1f, 1f);
+            closeRect.anchoredPosition = new Vector2(-12f, -12f);
+            closeRect.sizeDelta = new Vector2(52f, 44f);
+            Destroy(closeButton.GetComponent<LayoutElement>());
+            closeButton.onClick.AddListener(HideGeminiAnswerPanel);
+        }
+
+        geminiAnswerPanel.SetActive(true);
+        if (geminiAnswerText != null)
+        {
+            geminiAnswerText.text = (string.IsNullOrWhiteSpace(title) ? "" : title.Trim() + "\n") +
+                                    (body ?? string.Empty).Trim();
+        }
+    }
+
+    private TextMeshProUGUI CreateAnswerPanelText(Transform parent)
+    {
+        GameObject textObject = new GameObject("AnswerText");
+        textObject.transform.SetParent(parent, false);
+
+        RectTransform rect = textObject.AddComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = new Vector2(18f, 14f);
+        rect.offsetMax = new Vector2(-76f, -14f);
+
+        TextMeshProUGUI text = textObject.AddComponent<TextMeshProUGUI>();
+        text.color = Color.white;
+        text.fontSize = 22f;
+        text.enableAutoSizing = true;
+        text.fontSizeMin = 13f;
+        text.fontSizeMax = 22f;
+        text.enableWordWrapping = true;
+        text.overflowMode = TextOverflowModes.Ellipsis;
+        text.alignment = TextAlignmentOptions.TopLeft;
+        text.raycastTarget = false;
+        return text;
+    }
+
+    private Vector2 ClampOverlayCenter(Vector2 center, Vector2 size)
+    {
+        float halfWidth = size.x * 0.5f;
+        float halfHeight = size.y * 0.5f;
+        return new Vector2(
+            Mathf.Clamp(center.x, halfWidth + 12f, Screen.width - halfWidth - 12f),
+            Mathf.Clamp(center.y, halfHeight + 12f, Screen.height - halfHeight - 12f)
+        );
+    }
+
+    private void HideTranslationActionMenu()
+    {
+        if (selectedActionMenu != null)
+        {
+            Destroy(selectedActionMenu);
+            selectedActionMenu = null;
+        }
+    }
+
+    private void HideGeminiAnswerPanel()
+    {
+        if (geminiAnswerPanel != null)
+        {
+            Destroy(geminiAnswerPanel);
+            geminiAnswerPanel = null;
+            geminiAnswerText = null;
+        }
     }
 
     private Vector2 ResolveScreenOverlaySize(TranslationLabelGroup group)
@@ -761,6 +1061,9 @@ public class ARLabelPlacer : MonoBehaviour
     /// </summary>
     public void ClearFixedLabels()
     {
+        HideTranslationActionMenu();
+        HideGeminiAnswerPanel();
+
         foreach (var label in fixedLabels)
         {
             if (label != null)

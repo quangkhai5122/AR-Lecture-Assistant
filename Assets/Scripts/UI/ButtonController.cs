@@ -114,7 +114,6 @@ public class ButtonController : MonoBehaviour
         try
         {
             step = "1-capture";
-            stateManager.SetError($"[DEBUG] {step}...");
             PipelineResponse response = await RunPipelineAsync();
 
             step = "2-count";

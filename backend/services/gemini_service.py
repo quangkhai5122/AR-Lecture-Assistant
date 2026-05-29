@@ -95,6 +95,43 @@ class GeminiService:
         )
         return self._generate_text(prompt)
 
+    def ask_about_text(
+        self,
+        text: str,
+        target_language: str = "vi",
+        force_mock: bool = False,
+        provider: str | None = None,
+    ) -> GeminiTextResult:
+        resolved_provider = self._resolve_provider(force_mock, provider)
+        normalized_text = " ".join((text or "").split())
+        if not normalized_text:
+            return GeminiTextResult(
+                text="",
+                provider=resolved_provider,
+                model=self._model(),
+                mock_used=resolved_provider == "mock",
+                warnings=["No text to explain."],
+            )
+
+        if resolved_provider == "mock":
+            return GeminiTextResult(
+                text=f"[ASK-MOCK] Explain: {normalized_text[:240]}",
+                provider="mock",
+                model="mock",
+                mock_used=True,
+                warnings=[],
+            )
+
+        prompt = (
+            "You are helping a student understand one translated line from a lecture slide. "
+            "Explain the selected line in clear, concise Vietnamese. "
+            "If the line contains a technical term, define it briefly and give one useful context clue. "
+            "Do not translate the line again unless it helps the explanation.\n\n"
+            f"Target language: {target_language}\n\n"
+            f"Selected line:\n{normalized_text}"
+        )
+        return self._generate_text(prompt)
+
     def _resolve_provider(self, force_mock: bool, provider: str | None) -> str:
         if force_mock:
             return "mock"
