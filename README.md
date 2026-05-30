@@ -1,98 +1,271 @@
-# AR Lecture Translator MVP
+# AR Lecture Assistant
 
-MVP này là bộ khung cho hệ thống **dịch slide/bài giảng bằng AR trên mobile**:
+AR Lecture Assistant là một project Unity + Flask để dịch nội dung slide/bảng trong ngữ cảnh bài giảng. Ứng dụng chụp frame từ camera AR, gửi ảnh sang backend để OCR và dịch, rồi hiển thị bản dịch trực tiếp trên plane trong không gian AR. Repo hiện tại cũng có thêm nhánh transcript cho phần giảng nói: ghi âm, dịch câu nói, lưu note, tóm tắt và hỏi đáp bằng Gemini.
 
-- Unity + AR Foundation + ARCore: camera AR, raycast, anchor, world-space translation labels.
-- Backend Flask: `/pipeline/frame` nhận ảnh base64, chạy OCR mock/optional, giữ công thức, dịch mock/optional, trả JSON.
-- JSON contracts: schema thống nhất.
-- Docs: hướng dẫn setup Unity, API, tích hợp, demo và checklist.
+## Trạng thái repo hiện tại
 
-> Mục tiêu của MVP: chạy được end-to-end bằng mock trước. Sau đó từng thành viên thay mock bằng OCR/translation thật.
+- Repo gốc **đã là Unity project hoàn chỉnh** (`Assets/`, `Packages/`, `ProjectSettings/`).
+- Backend Flask nằm trong [`backend/`](backend/).
+- JSON contract nằm trong [`contracts/`](contracts/).
+- Script gửi sample request nằm trong [`scripts/`](scripts/).
+- Thư mục [`client-unity/`](client-unity/) chỉ là snapshot script để tham chiếu, không phải project Unity chính.
 
-## Cấu trúc
+## Tính năng đang có
+
+- Quét slide/bảng và đặt translation overlay lên nội dung OCR.
+- Giữ nguyên công thức toán khi dịch.
+- Gộp block OCR theo dòng để overlay dễ đọc hơn.
+- Subtitle cho dòng dịch chính.
+- Nút `Hide VN` / `Show VN` để ẩn hoặc hiện toàn bộ bản dịch trên slide.
+- Speech transcript với các chế độ:
+  - mock transcript trong Editor;
+  - Google Speech-to-Text qua REST hoặc SDK;
+  - dịch câu nói bằng Gemini;
+  - lưu note, export note, xóa note;
+  - tóm tắt note bằng Gemini;
+  - hỏi đáp trên một đoạn text đã chọn.
+- Chế độ mock và real provider cho backend.
+
+## Cấu trúc thư mục
 
 ```text
-ar-lecture-translator-mvp/
-├── client-unity/
-│   └── Assets/Scripts/
-├── backend/
-├── contracts/
-├── samples/
-├── docs/
-└── scripts/
+AR-Lecture-Assistant/
+├── Assets/                    # Unity project chính
+├── Packages/
+├── ProjectSettings/
+├── backend/                   # Flask backend
+├── client-unity/              # Snapshot script tham chiếu
+├── contracts/                 # JSON schema / sample payload
+├── samples/                   # Ảnh mẫu để test pipeline
+├── scripts/                   # Helper script chạy backend / post sample frame
+└── README.md
 ```
 
-## Chạy backend mock
+## Yêu cầu cài đặt
 
-```bash
-cd backend
+### Bắt buộc
+
+- Unity `2022.3.62f3`
+- Android Build Support trong Unity Hub nếu muốn build APK
+- Python `3.11` cho backend local
+
+### Tùy chọn theo provider
+
+- **Tesseract OCR** nếu muốn OCR thật tại local
+- **PaddleOCR** nếu muốn OCR bằng Paddle trên môi trường riêng
+- **Google Translate API key** nếu muốn dịch bằng Google
+- **Google Speech** credentials hoặc API key nếu muốn speech-to-text thật
+- **Gemini API key** nếu muốn dịch speech / tóm tắt / hỏi đáp thật
+
+## Chạy nhanh theo mock mode
+
+Đây là đường đi ngắn nhất để chạy end-to-end mà không cần API key.
+
+### 1. Tạo môi trường Python và cài backend
+
+```powershell
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r backend\requirements.txt
 ```
 
-Test nhanh:
+### 2. Chạy backend
 
-```bash
-curl http://127.0.0.1:5000/health
+```powershell
+python backend\app.py
 ```
 
-Gọi pipeline bằng sample image:
+Backend mặc định chạy ở `http://127.0.0.1:5000`.
 
-```bash
-python ../scripts/post_sample_frame.py --image ../samples/slides/slide_01.png
+### 3. Kiểm tra backend
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:5000/health | Select-Object -ExpandProperty Content
 ```
 
-## Setup Unity
+### 4. Gửi thử một frame mẫu
 
-Xem: [`docs/unity_scene_setup.md`](docs/unity_scene_setup.md)
-
-Tóm tắt:
-
-1. Tạo Unity project.
-2. Cài `AR Foundation`, `Google ARCore XR Plugin`, `XR Plugin Management`, `TextMeshPro`.
-3. Copy thư mục `client-unity/Assets/Scripts` vào project Unity.
-4. Tạo scene gồm `AR Session`, `XR Origin (AR)`, `AR Plane Manager`, `AR Raycast Manager`, `AR Anchor Manager`.
-5. Tạo UI có nút `Scan`, `Clear`, `StatusText`, `DebugText`.
-6. Gắn script `ARLectureTranslatorController` vào một empty object.
-
-## Luồng MVP
-
-```text
-Unity App
-  ↓ capture screenshot / frame
-POST /pipeline/frame
-  ↓
-Backend
-  ├─ OCRService: mock hoặc Tesseract optional
-  ├─ FormulaService: mask/restore công thức
-  ├─ TranslationService: mock hoặc LibreTranslate optional
-  └─ PipelineService: merge kết quả
-  ↓
-Unity nhận blocks
-  ↓
-Raycast bbox center vào AR plane
-  ↓
-Tạo anchor + world-space label
+```powershell
+python scripts\post_sample_frame.py --image samples\slides\slide_01.png --mock
 ```
 
-## Chế độ mock và real
+### 5. Mở Unity project
 
-- `MockPipelineClient.cs`: không cần backend, trả dữ liệu giả trong Unity.
-- `HttpPipelineClient.cs`: gọi backend thật.
-- Backend real mode mặc định dùng OCR `tesseract` và dịch `mock` để demo local không cần API key.
-- Trên macOS local đã test với `brew install tesseract` và `pytesseract==0.3.13`.
-- Nếu muốn gọi OCR thật từ Unity, để `backendMockMode = false`, `ocrProvider = tesseract`, `translationProvider = mock`.
+1. Mở Unity Hub.
+2. `Add project from disk` và chọn thư mục repo gốc `AR-Lecture-Assistant`.
+3. Mở scene [`Assets/Scenes/MainScene.unity`](Assets/Scenes/MainScene.unity).
+4. Nhấn Play để kiểm tra UI / backend flow trong Editor.
 
-## Việc cần cải thiện sau MVP
+## Cấu hình backend URL cho Unity
 
-Tìm các comment `TODO(MVP)` trong code. Các việc lớn:
+`HttpPipelineClient` hiện có default:
 
-- Thay screenshot capture bằng `ARCameraManager.TryAcquireLatestCpuImage`.
-- Thay OCR mock bằng ML Kit / Google Vision / PaddleOCR / Tesseract pipeline ổn định.
-- Thay dịch mock bằng ML Kit Translation / Google Translate / OpenAI / NLLB.
-- Mapping bbox 2D → plane 3D chính xác hơn bằng homography/pose estimation.
-- Làm label overlap avoidance.
-- Cache OCR/translation để giảm latency.
-- Thêm LLM QA + Add Notes.
+- `backendBaseUrl = http://192.168.1.10:5000`
+- `endpointUrl = http://127.0.0.1:5000/pipeline/frame`
+
+Nhưng ở runtime, luồng chính ưu tiên `backendBaseUrl`. Vì vậy:
+
+- Nếu chạy Unity Editor trên cùng máy với backend: đặt `backendBaseUrl` thành `http://127.0.0.1:5000`
+- Nếu chạy trên điện thoại Android: đặt `backendBaseUrl` thành `http://<LAN-IP-cua-may-chay-backend>:5000`
+
+Có hai cách cấu hình:
+
+1. Sửa default trực tiếp trong [`Assets/Scripts/Services/HttpPipelineClient.cs`](Assets/Scripts/Services/HttpPipelineClient.cs)
+2. Hoặc thêm `HttpPipelineClient` vào scene trước, rồi chỉnh giá trị trong Inspector
+
+Lưu ý: `ButtonController` và `SpeechTranscriptController` có thể tự `AddComponent<HttpPipelineClient>()` nếu scene chưa có component này, nên nếu không cấu hình sẵn thì app sẽ dùng default hard-coded ở file script.
+
+## Cài đặt backend chi tiết
+
+### Cấu hình `.env`
+
+Backend tự đọc file [`backend/.env`](backend/.env) khi khởi động. Repo đã thêm mẫu tại [`backend/.env.example`](backend/.env.example).
+
+```powershell
+Copy-Item backend\.env.example backend\.env
+```
+
+Sau đó sửa các biến cần dùng.
+
+### OCR thật bằng Tesseract
+
+Tesseract là lựa chọn local đơn giản nhất cho OCR thật.
+
+1. Cài binary Tesseract trên máy.
+2. Nếu `tesseract.exe` không nằm trong `PATH`, đặt `TESSERACT_CMD` trong `backend/.env`.
+3. Cấu hình tối thiểu:
+
+```env
+OCR_PROVIDER=tesseract
+OCR_MIN_CONFIDENCE=0.22
+TRANSLATION_PROVIDER=mock
+```
+
+Test với sample:
+
+```powershell
+python scripts\post_sample_frame.py `
+  --image samples\slides\slide_01.png `
+  --real `
+  --ocr-provider tesseract `
+  --translation-provider mock
+```
+
+### OCR bằng PaddleOCR
+
+`paddleocr` không nằm trong `backend/requirements.txt`. Repo cố ý tách phần này vì phụ thuộc CUDA / môi trường GPU.
+
+Ví dụ flow riêng:
+
+```powershell
+conda create -n paddleocr_gpu python=3.10 -y
+conda activate paddleocr_gpu
+python -m pip install --upgrade pip
+pip install paddleocr
+pip install -r backend\requirements.txt
+python backend\app.py
+```
+
+Khi dùng PaddleOCR, cấu hình các biến như:
+
+```env
+OCR_PROVIDER=paddleocr
+PADDLEOCR_LANG=en
+PADDLEOCR_USE_GPU=1
+PADDLEOCR_DEVICE=gpu
+```
+
+### Dịch bằng Google Translate
+
+```env
+TRANSLATION_PROVIDER=google
+GOOGLE_TRANSLATE_API_KEY=<your-key>
+GOOGLE_TRANSLATE_SOURCE_LANGUAGE=en
+```
+
+### Speech-to-Text bằng Google
+
+Backend hỗ trợ hai cách:
+
+- dùng `GOOGLE_SPEECH_API_KEY` hoặc `GOOGLE_CLOUD_SPEECH_API_KEY`;
+- hoặc dùng `google-cloud-speech` + `GOOGLE_APPLICATION_CREDENTIALS`.
+
+Ví dụ:
+
+```env
+SPEECH_PROVIDER=google
+GOOGLE_SPEECH_API_KEY=<your-key>
+```
+
+### Gemini cho dịch câu nói / summary / ask text
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=<your-key>
+GEMINI_MODEL=gemini-2.5-flash-lite
+```
+
+## Chạy test backend
+
+```powershell
+Push-Location backend
+..\.venv\Scripts\python.exe -m pytest tests -q
+Pop-Location
+```
+
+Repo hiện có test cho:
+
+- mock pipeline;
+- OCR endpoint;
+- formula masking / restore;
+- OCR post-processing;
+- translation cache;
+- speech endpoint mock;
+- Gemini adapter mock / request format.
+
+Một số test OCR thật sẽ tự skip nếu máy không có binary `tesseract`.
+
+## Scene và workflow chính trong Unity
+
+Scene build hiện tại là [`Assets/Scenes/MainScene.unity`](Assets/Scenes/MainScene.unity). `EditorBuildSettings` đang bật scene này làm scene chạy chính.
+
+Luồng sử dụng:
+
+1. `Scan` để bật plane detection
+2. `Translate` để chụp frame và gọi backend
+3. App đặt overlay dịch lên nội dung OCR
+4. `Hide VN` để ẩn toàn bộ bản dịch, `Show VN` để bật lại
+5. `Clear` để xóa overlay
+6. Transcript modal cho speech/note/summary hoạt động độc lập với luồng slide
+
+## Endpoint backend chính
+
+- `GET /health`
+- `POST /pipeline`
+- `POST /pipeline/frame`
+- `POST /ocr`
+- `POST /translate`
+- `POST /speech/transcribe`
+- `POST /speech/translate-text`
+- `POST /speech/translate`
+- `POST /speech/summarize`
+- `POST /speech/ask-text`
+- `WS /speech/stream`
+
+Schema tham chiếu nằm trong [`contracts/`](contracts/).
+
+## File quan trọng nên đọc trước
+
+- [`Assets/Scripts/UI/ButtonController.cs`](Assets/Scripts/UI/ButtonController.cs)
+- [`Assets/Scripts/AR/ARLabelPlacer.cs`](Assets/Scripts/AR/ARLabelPlacer.cs)
+- [`Assets/Scripts/UI/SpeechTranscriptController.cs`](Assets/Scripts/UI/SpeechTranscriptController.cs)
+- [`Assets/Scripts/Services/HttpPipelineClient.cs`](Assets/Scripts/Services/HttpPipelineClient.cs)
+- [`backend/app.py`](backend/app.py)
+- [`backend/services/pipeline_service.py`](backend/services/pipeline_service.py)
+- [`backend/tests/test_pipeline.py`](backend/tests/test_pipeline.py)
+
+## Ghi chú
+
+- Thư mục `docs/` không còn tồn tại trong repo hiện tại; README này là tài liệu cài đặt chính.
+- Nếu chỉ muốn lấy bộ script cũ để nhúng vào một project khác, xem [`client-unity/README_UNITY.md`](client-unity/README_UNITY.md), nhưng source chạy chính vẫn là thư mục `Assets/` ở root repo.

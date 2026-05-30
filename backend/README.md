@@ -1,125 +1,142 @@
-# AR Lecture Translator MVP
+# Backend: AR Lecture Assistant
 
-MVP này là bộ khung cho hệ thống **dịch slide/bài giảng bằng AR trên mobile**:
+Backend này nhận ảnh hoặc audio từ Unity client, sau đó xử lý OCR, dịch, speech-to-text và các tác vụ Gemini.
 
-- Unity + AR Foundation + ARCore: camera AR, raycast, anchor, world-space translation labels.
-- Backend Flask: `/pipeline/frame` nhận ảnh base64, chạy OCR mock/optional, giữ công thức, dịch mock/optional, trả JSON.
-- JSON contracts: schema thống nhất.
-- Docs: hướng dẫn setup Unity, API, tích hợp, demo và checklist.
+Nếu bạn cần hướng dẫn đầy đủ cho toàn repo, xem [`../README.md`](../README.md). File này chỉ tập trung vào backend.
 
-> Mục tiêu của MVP: chạy được end-to-end bằng mock trước. Sau đó từng thành viên thay mock bằng OCR/translation thật.
+## Yêu cầu
 
-## Cài Tesseract OCR local
+- Python `3.11` cho luồng mock / Tesseract
+- `paddleocr` là tùy chọn và phải cài riêng nếu dùng `OCR_PROVIDER=paddleocr`
 
-Tesseract là provider OCR thật nhẹ nhất để demo local. Trên macOS:
+## Cài đặt
 
-```bash
-brew install tesseract
-python -m pip install -r backend/requirements.txt
-export OCR_PROVIDER=tesseract
-export TESSERACT_CMD=/opt/homebrew/bin/tesseract
-export OCR_MIN_CONFIDENCE=0.2
-```
-
-Test OCR thật bằng ảnh sample:
-
-```bash
-python scripts/post_sample_frame.py \
-  --image samples/slides/slide_01.png \
-  --real \
-  --ocr-provider tesseract \
-  --translation-provider google
-```
-
-## Chạy Tesseract OCR + Google Translate
-
-Backend tự đọc `backend/.env` khi khởi động. File này bị git ignore, dùng để giữ API key local:
-
-```bash
-cp backend/.env.example backend/.env
-# sửa GOOGLE_TRANSLATE_API_KEY trong backend/.env
-python backend/app.py
-```
-
-Các biến tối thiểu:
-
-```bash
-OCR_PROVIDER=tesseract
-TRANSLATION_PROVIDER=google
-GOOGLE_TRANSLATE_API_KEY=<your-google-translate-api-key>
-GOOGLE_TRANSLATE_SOURCE_LANGUAGE=en
-```
-
-Test end-to-end bằng ảnh sample:
-
-```bash
-python scripts/post_sample_frame.py \
-  --image samples/slides/slide_01.png \
-  --real \
-  --ocr-provider tesseract \
-  --translation-provider google
-```
-
-## Cài PaddleOCR và LibreTranslate
-```bash
-conda create -n paddleocr_gpu python=3.10 -y
-conda activate paddleocr_gpu
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install paddlepaddle-gpu==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/   # Phải chạy nvidia-smi trước để xem có tương thích phiên bản cuda không.
-pip install paddleocr
 pip install -r requirements.txt
+```
+
+Nếu chạy trực tiếp trong thư mục `backend`:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
 python app.py
 ```
 
-## Chạy PaddleOCR + Google Cloud Translation
-
-Không hardcode API key vào repo. Đặt key trong biến môi trường trước khi chạy backend:
+Hoặc từ root repo:
 
 ```powershell
-conda activate D:\conda_envs\paddleocr_gpu
-cd D:\Python_Project\AR_Lecture_Assistant
-
-$env:FLASK_DEBUG="0"
-$env:OCR_PROVIDER="paddleocr"
-$env:PADDLEOCR_USE_GPU="1"
-$env:PADDLEOCR_LANG="en"
-
-$env:TRANSLATION_PROVIDER="google"
-$env:GOOGLE_TRANSLATE_API_KEY="<your-google-translate-api-key>"
-$env:GOOGLE_TRANSLATE_SOURCE_LANGUAGE="en"
-
 python backend\app.py
 ```
 
-Test end-to-end:
+## File cấu hình
+
+Backend tự load `backend/.env` nếu file tồn tại.
+
+Tạo nhanh từ mẫu:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Các nhóm biến quan trọng:
+
+- Flask: `HOST`, `PORT`, `FLASK_DEBUG`
+- OCR: `OCR_PROVIDER`, `TESSERACT_CMD`, `OCR_MIN_CONFIDENCE`
+- PaddleOCR: `PADDLEOCR_LANG`, `PADDLEOCR_USE_GPU`, `PADDLEOCR_DEVICE`
+- Translate: `TRANSLATION_PROVIDER`, `LIBRETRANSLATE_URL`, `GOOGLE_TRANSLATE_API_KEY`
+- Speech: `SPEECH_PROVIDER`, `GOOGLE_SPEECH_API_KEY`
+- Gemini: `LLM_PROVIDER`, `GEMINI_API_KEY`, `GEMINI_MODEL`
+
+## Chạy local
+
+```powershell
+python app.py
+```
+
+Health check:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:5000/health | Select-Object -ExpandProperty Content
+```
+
+## Gửi sample frame
+
+Từ root repo:
+
+```powershell
+python scripts\post_sample_frame.py --image samples\slides\slide_01.png --mock
+```
+
+OCR thật + mock translate:
 
 ```powershell
 python scripts\post_sample_frame.py `
   --image samples\slides\slide_01.png `
   --real `
-  --ocr-provider paddleocr `
-  --translation-provider google `
-  --timeout 240
+  --ocr-provider tesseract `
+  --translation-provider mock
 ```
 
-## Chạy OCR + Translate theo contract json
+## Provider
 
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
+### OCR
+
+- `mock`
+- `tesseract`
+- `paddleocr`
+
+### Translation
+
+- `mock`
+- `libretranslate`
+- `google`
+
+### Speech
+
+- `mock`
+- `google`
+
+### LLM
+
+- `mock`
+- `gemini`
+
+## Endpoint
+
+- `GET /health`
+- `POST /pipeline`
+- `POST /pipeline/frame`
+- `POST /ocr`
+- `POST /translate`
+- `POST /speech/transcribe`
+- `POST /speech/translate-text`
+- `POST /speech/translate`
+- `POST /speech/summarize`
+- `POST /speech/ask-text`
+- `WS /speech/stream`
+
+## Chạy test
+
+Từ root repo:
+
+```powershell
+Push-Location backend
+..\.venv\Scripts\python.exe -m pytest tests -q
+Pop-Location
 ```
 
-Test nhanh:
+Hoặc từ thư mục `backend`:
 
-```bash
-curl http://127.0.0.1:5000/health
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-Gọi pipeline bằng sample image:
+Một số test OCR thật sẽ tự skip nếu máy không có `tesseract`.
 
-```bash
-python ../scripts/post_sample_frame.py --image ../samples/slides/slide_01.png
-```
+## Ghi chú
+
+- `Dockerfile` dùng image `python:3.11-slim` và chỉ phù hợp cho luồng không phụ thuộc GPU.
+- Nếu dùng `OCR_PROVIDER=paddleocr`, nên chạy backend trong môi trường riêng đã cài Paddle phù hợp với CUDA/CPU của máy.
