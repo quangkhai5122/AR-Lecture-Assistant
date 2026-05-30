@@ -37,6 +37,7 @@ public class ButtonController : MonoBehaviour
     [SerializeField] private Button scanButton;
     [SerializeField] private Button translateButton;
     [SerializeField] private Button clearButton;
+    [SerializeField] private Button hideTranslationsButton;
     [SerializeField] private Button freezeButton;
 
     [Header("Debug")]
@@ -44,6 +45,11 @@ public class ButtonController : MonoBehaviour
     [SerializeField] private DebugPanelController debugPanel;
 
     private bool isFrozen = false;
+
+    private void Awake()
+    {
+        EnsureHideTranslationsButton();
+    }
 
     private void Start()
     {
@@ -65,6 +71,10 @@ public class ButtonController : MonoBehaviour
         scanButton.onClick.AddListener(OnScanPressed);
         translateButton.onClick.AddListener(OnTranslatePressed);
         clearButton.onClick.AddListener(OnClearPressed);
+        if (hideTranslationsButton != null)
+        {
+            hideTranslationsButton.onClick.AddListener(OnHideTranslationsPressed);
+        }
         if (freezeButton != null)
         {
             freezeButton.onClick.AddListener(OnFreezePressed);
@@ -74,6 +84,7 @@ public class ButtonController : MonoBehaviour
 
         UpdateButtonStates();
         UpdateFreezeVisual();
+        UpdateHideTranslationsVisual();
         debugPanel?.UpdateTrackingState("Idle");
         _ = CheckBackendHealthAsync();
     }
@@ -83,6 +94,7 @@ public class ButtonController : MonoBehaviour
         if (scanButton != null) scanButton.onClick.RemoveListener(OnScanPressed);
         if (translateButton != null) translateButton.onClick.RemoveListener(OnTranslatePressed);
         if (clearButton != null) clearButton.onClick.RemoveListener(OnClearPressed);
+        if (hideTranslationsButton != null) hideTranslationsButton.onClick.RemoveListener(OnHideTranslationsPressed);
         if (freezeButton != null) freezeButton.onClick.RemoveListener(OnFreezePressed);
         if (stateManager != null) stateManager.OnStateChanged.RemoveListener(OnStateChanged);
     }
@@ -370,13 +382,24 @@ public class ButtonController : MonoBehaviour
 
     private void OnClearPressed()
     {
-        labelPlacer.ClearAll();
+        labelPlacer?.ClearAll();
+        labelPlacer?.SetTranslationsVisible(true);
         debugPanel?.ClearAll();
         debugPanel?.UpdateTrackingState("Idle");
         isFrozen = false;
         SetPlaneTrackingEnabled(true);
         UpdateFreezeVisual();
+        UpdateHideTranslationsVisual();
         stateManager.SetState(AppState.Idle);
+    }
+
+    private void OnHideTranslationsPressed()
+    {
+        if (labelPlacer == null) return;
+
+        labelPlacer.SetTranslationsVisible(!labelPlacer.AreTranslationsVisible);
+        UpdateHideTranslationsVisual();
+        UpdateButtonStates();
     }
 
     private void OnFreezePressed()
@@ -397,6 +420,7 @@ public class ButtonController : MonoBehaviour
         }
 
         debugPanel?.UpdateTrackingState(isFrozen ? "Frozen" : newState.ToString());
+        UpdateHideTranslationsVisual();
         UpdateButtonStates();
     }
 
@@ -408,6 +432,11 @@ public class ButtonController : MonoBehaviour
         translateButton.interactable =
             (state == AppState.PlaneDetected || state == AppState.Anchored);
         clearButton.interactable = (state == AppState.Anchored || state == AppState.Error);
+        if (hideTranslationsButton != null)
+        {
+            bool hasTranslations = labelPlacer != null && labelPlacer.HasPlacedTranslations();
+            hideTranslationsButton.interactable = hasTranslations && state != AppState.Translating;
+        }
         if (freezeButton != null)
         {
             freezeButton.interactable =
@@ -447,6 +476,132 @@ public class ButtonController : MonoBehaviour
         foreach (Text text in freezeButton.GetComponentsInChildren<Text>(true))
         {
             text.text = isFrozen ? "Frozen" : "Freeze";
+        }
+    }
+
+    private void UpdateHideTranslationsVisual()
+    {
+        if (hideTranslationsButton == null) return;
+
+        bool translationsVisible = labelPlacer == null || labelPlacer.AreTranslationsVisible;
+        string label = translationsVisible ? "Hide VN" : "Show VN";
+        Color baseColor = translationsVisible
+            ? new Color(0.18f, 0.24f, 0.31f, 0.96f)
+            : new Color(0.10f, 0.68f, 0.52f, 0.96f);
+
+        Image image = hideTranslationsButton.GetComponent<Image>();
+        if (image != null)
+        {
+            image.color = baseColor;
+        }
+
+        ColorBlock colors = hideTranslationsButton.colors;
+        colors.normalColor = baseColor;
+        colors.highlightedColor = Color.Lerp(baseColor, Color.white, 0.12f);
+        colors.pressedColor = Color.Lerp(baseColor, Color.black, 0.16f);
+        colors.selectedColor = colors.highlightedColor;
+        colors.disabledColor = new Color(0.18f, 0.20f, 0.24f, 0.52f);
+        colors.colorMultiplier = 1f;
+        hideTranslationsButton.colors = colors;
+
+        SetButtonLabel(hideTranslationsButton, label);
+    }
+
+    private void EnsureHideTranslationsButton()
+    {
+        if (hideTranslationsButton == null)
+        {
+            GameObject existingButton = GameObject.Find("HideTranslationsButton");
+            if (existingButton != null)
+            {
+                hideTranslationsButton = existingButton.GetComponent<Button>();
+            }
+        }
+
+        if (hideTranslationsButton != null) return;
+
+        Button template = clearButton != null ? clearButton : translateButton;
+        Transform parent = ResolveHideTranslationsParent(out bool attachToTopBar);
+        if (template == null || parent == null) return;
+
+        GameObject buttonObject = Instantiate(template.gameObject, parent, false);
+        buttonObject.name = "HideTranslationsButton";
+        hideTranslationsButton = buttonObject.GetComponent<Button>();
+
+        ConfigureHideTranslationsButtonLayout(buttonObject.GetComponent<RectTransform>(), attachToTopBar);
+        SetButtonLabel(hideTranslationsButton, "Hide VN");
+
+        if (attachToTopBar)
+        {
+            ReserveTopBarSpaceForHideTranslationsButton();
+        }
+    }
+
+    private Transform ResolveHideTranslationsParent(out bool attachToTopBar)
+    {
+        GameObject topBar = GameObject.Find("TopBar");
+        if (topBar != null)
+        {
+            attachToTopBar = true;
+            return topBar.transform;
+        }
+
+        GameObject safeArea = GameObject.Find("SafeArea");
+        if (safeArea != null)
+        {
+            attachToTopBar = false;
+            return safeArea.transform;
+        }
+
+        Canvas canvas = FindAnyObjectByType<Canvas>();
+        attachToTopBar = false;
+        return canvas != null ? canvas.transform : null;
+    }
+
+    private void ConfigureHideTranslationsButtonLayout(RectTransform rect, bool attachToTopBar)
+    {
+        if (rect == null) return;
+
+        if (attachToTopBar)
+        {
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            rect.anchoredPosition = new Vector2(-18f, 0f);
+            rect.sizeDelta = new Vector2(150f, 56f);
+            return;
+        }
+
+        rect.anchorMin = new Vector2(1f, 1f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(1f, 1f);
+        rect.anchoredPosition = new Vector2(-24f, -126f);
+        rect.sizeDelta = new Vector2(150f, 56f);
+    }
+
+    private void ReserveTopBarSpaceForHideTranslationsButton()
+    {
+        GameObject titleObject = GameObject.Find("AppTitle");
+        if (titleObject == null) return;
+
+        RectTransform titleRect = titleObject.GetComponent<RectTransform>();
+        if (titleRect == null) return;
+
+        titleRect.offsetMax = new Vector2(Mathf.Min(titleRect.offsetMax.x, -190f), titleRect.offsetMax.y);
+    }
+
+    private static void SetButtonLabel(Button button, string label)
+    {
+        if (button == null) return;
+
+        foreach (TextMeshProUGUI text in button.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            text.text = label;
+        }
+
+        foreach (Text text in button.GetComponentsInChildren<Text>(true))
+        {
+            text.text = label;
         }
     }
 }

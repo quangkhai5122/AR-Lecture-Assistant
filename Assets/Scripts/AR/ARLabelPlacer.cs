@@ -57,9 +57,12 @@ public class ARLabelPlacer : MonoBehaviour
     private GameObject geminiAnswerPanel;
     private TextMeshProUGUI geminiAnswerText;
     private LectureNotesService fallbackNotesService;
+    private bool translationsVisible = true;
 
     // Cache pose plane cuối cùng — dùng làm fallback khi raycast miss
     private Pose? cachedPlanePose = null;
+
+    public bool AreTranslationsVisible => translationsVisible;
 
     /// <summary>
     /// Gọi khi detect plane thành công — lưu pose để dùng khi camera di gần
@@ -258,6 +261,36 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         return count;
+    }
+
+    public bool HasPlacedTranslations()
+    {
+        if (currentSubtitle != null) return true;
+
+        foreach (GameObject label in fixedLabels)
+        {
+            if (label != null) return true;
+        }
+
+        foreach (GameObject overlay in screenOverlayLabels)
+        {
+            if (overlay != null) return true;
+        }
+
+        return false;
+    }
+
+    public void SetTranslationsVisible(bool visible)
+    {
+        translationsVisible = visible;
+
+        if (!translationsVisible)
+        {
+            HideTranslationActionMenu();
+            HideGeminiAnswerPanel();
+        }
+
+        ApplyTranslationVisibility();
     }
 
     private Vector2 BBoxCenterToImagePoint(float[] bbox)
@@ -606,6 +639,7 @@ public class ARLabelPlacer : MonoBehaviour
         text.margin = Vector4.zero;
         text.raycastTarget = false;
 
+        ApplyTranslationVisibility(panel);
         return true;
     }
 
@@ -628,7 +662,7 @@ public class ARLabelPlacer : MonoBehaviour
 
     private void ShowTranslationActionMenu(string selectedText, Vector2 screenPoint)
     {
-        if (string.IsNullOrWhiteSpace(selectedText)) return;
+        if (!translationsVisible || string.IsNullOrWhiteSpace(selectedText)) return;
 
         HideTranslationActionMenu();
         Canvas canvas = EnsureScreenOverlayCanvas();
@@ -1034,7 +1068,7 @@ public class ARLabelPlacer : MonoBehaviour
             currentSubtitle = Instantiate(subtitlePrefab, subtitleContainer);
         }
 
-        var textComp = currentSubtitle.GetComponentInChildren<TextMeshProUGUI>();
+        var textComp = currentSubtitle.GetComponentInChildren<TextMeshProUGUI>(true);
         if (textComp != null)
         {
             textComp.text = Ellipsize(translatedText, maxSubtitleCharacters);
@@ -1042,6 +1076,7 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         ARLectureVisualPolish.StyleSubtitle(currentSubtitle);
+        ApplyTranslationVisibility(currentSubtitle);
     }
 
     /// <summary>
@@ -1157,7 +1192,31 @@ public class ARLabelPlacer : MonoBehaviour
         ARLectureVisualPolish.StyleLabel(label);
         FitLabelPanel(label, textComp, targetScreenSize);
         fixedLabels.Add(label);
+        ApplyTranslationVisibility(label);
         return true;
+    }
+
+    private void ApplyTranslationVisibility()
+    {
+        ApplyTranslationVisibility(currentSubtitle);
+
+        foreach (GameObject label in fixedLabels)
+        {
+            ApplyTranslationVisibility(label);
+        }
+
+        foreach (GameObject overlay in screenOverlayLabels)
+        {
+            ApplyTranslationVisibility(overlay);
+        }
+    }
+
+    private void ApplyTranslationVisibility(GameObject target)
+    {
+        if (target == null) return;
+        if (target.activeSelf == translationsVisible) return;
+
+        target.SetActive(translationsVisible);
     }
 
     private void RegisterPlacedLabel(Vector2 screenPoint, string labelText)

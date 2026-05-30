@@ -368,6 +368,7 @@ public class ARLectureVisualPolish : MonoBehaviour
         if (lowerName.Contains("scan")) return PrimaryColor;
         if (lowerName.Contains("translate")) return TranslateColor;
         if (lowerName.Contains("clear")) return ClearColor;
+        if (lowerName.Contains("hide")) return new Color(0.18f, 0.24f, 0.31f, 0.96f);
         if (lowerName.Contains("freeze")) return new Color(0.12f, 0.45f, 0.64f, 0.94f);
         if (lowerName.Contains("debug")) return new Color(0.92f, 0.93f, 0.96f, 0.94f);
         return new Color(0.12f, 0.14f, 0.18f, 0.94f);
@@ -379,6 +380,7 @@ public class ARLectureVisualPolish : MonoBehaviour
         if (lowerName.Contains("scan")) return "Scan";
         if (lowerName.Contains("translate")) return "Translate";
         if (lowerName.Contains("clear")) return "Clear";
+        if (lowerName.Contains("hide")) return "Hide VN";
         if (lowerName.Contains("freeze")) return "Freeze";
         if (lowerName.Contains("debug")) return "Debug";
         return string.IsNullOrWhiteSpace(currentText) ? "Action" : currentText.Trim();
