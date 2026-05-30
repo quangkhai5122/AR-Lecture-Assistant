@@ -539,22 +539,9 @@ public class ButtonController : MonoBehaviour
 
     private Transform ResolveHideTranslationsParent(out bool attachToTopBar)
     {
-        GameObject topBar = GameObject.Find("TopBar");
-        if (topBar != null)
-        {
-            attachToTopBar = true;
-            return topBar.transform;
-        }
-
-        GameObject safeArea = GameObject.Find("SafeArea");
-        if (safeArea != null)
-        {
-            attachToTopBar = false;
-            return safeArea.transform;
-        }
-
-        Canvas canvas = FindAnyObjectByType<Canvas>();
+        // Luôn gắn vào root Canvas (cùng parent với Transcript button)
         attachToTopBar = false;
+        Canvas canvas = FindAnyObjectByType<Canvas>();
         return canvas != null ? canvas.transform : null;
     }
 
@@ -562,21 +549,12 @@ public class ButtonController : MonoBehaviour
     {
         if (rect == null) return;
 
-        if (attachToTopBar)
-        {
-            rect.anchorMin = new Vector2(1f, 0.5f);
-            rect.anchorMax = new Vector2(1f, 0.5f);
-            rect.pivot = new Vector2(1f, 0.5f);
-            rect.anchoredPosition = new Vector2(-18f, 0f);
-            rect.sizeDelta = new Vector2(150f, 56f);
-            return;
-        }
-
+        // Luôn đặt ở top-right, ngay dưới nút Transcript (y=-70, h=50 → dưới là y=-126)
         rect.anchorMin = new Vector2(1f, 1f);
         rect.anchorMax = new Vector2(1f, 1f);
         rect.pivot = new Vector2(1f, 1f);
-        rect.anchoredPosition = new Vector2(-24f, -126f);
-        rect.sizeDelta = new Vector2(150f, 56f);
+        rect.anchoredPosition = new Vector2(-16f, -126f);
+        rect.sizeDelta = new Vector2(160f, 50f);
     }
 
     private void ReserveTopBarSpaceForHideTranslationsButton()

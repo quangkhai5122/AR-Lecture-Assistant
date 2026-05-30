@@ -874,9 +874,48 @@ public class ARLabelPlacer : MonoBehaviour
         geminiAnswerPanel.SetActive(true);
         if (geminiAnswerText != null)
         {
+            string cleanBody = StripMarkdown(body ?? string.Empty);
             geminiAnswerText.text = (string.IsNullOrWhiteSpace(title) ? "" : title.Trim() + "\n") +
-                                    (body ?? string.Empty).Trim();
+                                    cleanBody.Trim();
         }
+    }
+
+    /// <summary>
+    /// Loại bỏ markdown formatting từ text LLM trả về (**, *, #, ```, etc.)
+    /// </summary>
+    private static string StripMarkdown(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        // Loại bỏ code blocks ``` ... ```
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"```[\s\S]*?```", m =>
+        {
+            string inner = m.Value;
+            if (inner.Length > 6) inner = inner.Substring(3, inner.Length - 6);
+            // Bỏ dòng đầu nếu là tên language (python, csharp, etc.)
+            int nl = inner.IndexOf('\n');
+            if (nl >= 0 && nl < 20) inner = inner.Substring(nl + 1);
+            return inner.Trim();
+        });
+
+        // Loại bỏ inline code `text`
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"`([^`]+)`", "$1");
+
+        // Loại bỏ bold **text** và __text__
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\*\*(.+?)\*\*", "$1");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"__(.+?)__", "$1");
+
+        // Loại bỏ italic *text* và _text_ (cẩn thận không xóa bullet points)
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", "$1");
+
+        // Loại bỏ headers # ## ### 
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"^#{1,6}\s+", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+
+        // Chuyển bullet points "* " thành "• "
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"^\*\s+", "• ", System.Text.RegularExpressions.RegexOptions.Multiline);
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"^-\s+", "• ", System.Text.RegularExpressions.RegexOptions.Multiline);
+
+        return text;
     }
 
     private TextMeshProUGUI CreateAnswerPanelText(Transform parent)

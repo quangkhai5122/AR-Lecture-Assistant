@@ -925,8 +925,8 @@ public class SpeechTranscriptController : MonoBehaviour
         toggleRect.anchorMin = new Vector2(1f, 1f);
         toggleRect.anchorMax = new Vector2(1f, 1f);
         toggleRect.pivot = new Vector2(1f, 1f);
-        toggleRect.anchoredPosition = new Vector2(-24f, -112f);
-        toggleRect.sizeDelta = new Vector2(220f, 64f);
+        toggleRect.anchoredPosition = new Vector2(-16f, -70f);
+        toggleRect.sizeDelta = new Vector2(160f, 50f);
         toggleButton.onClick.AddListener(ToggleModal);
 
         modalRoot = new GameObject("TranscriptModal");
@@ -1312,7 +1312,32 @@ public class SpeechTranscriptController : MonoBehaviour
 
     private string BuildSummaryText()
     {
-        return string.IsNullOrWhiteSpace(summaryText) ? "No summary yet." : summaryText.TrimEnd();
+        return string.IsNullOrWhiteSpace(summaryText) ? "No summary yet." : StripMarkdown(summaryText).TrimEnd();
+    }
+
+    /// <summary>
+    /// Loại bỏ markdown formatting từ text LLM trả về
+    /// </summary>
+    private static string StripMarkdown(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"```[\s\S]*?```", m =>
+        {
+            string inner = m.Value;
+            if (inner.Length > 6) inner = inner.Substring(3, inner.Length - 6);
+            int nl = inner.IndexOf('\n');
+            if (nl >= 0 && nl < 20) inner = inner.Substring(nl + 1);
+            return inner.Trim();
+        });
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"`([^`]+)`", "$1");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\*\*(.+?)\*\*", "$1");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"__(.+?)__", "$1");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", "$1");
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"^#{1,6}\s+", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"^\*\s+", "• ", System.Text.RegularExpressions.RegexOptions.Multiline);
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"^-\s+", "• ", System.Text.RegularExpressions.RegexOptions.Multiline);
+        return text;
     }
 
     private string BuildTranscriptText(bool includeTimestamps)
