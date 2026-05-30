@@ -30,6 +30,10 @@ public class SpeechTranscriptController : MonoBehaviour
     [SerializeField] private float microphoneStartupTimeoutSeconds = 1f;
     [SerializeField] private int streamingSendIntervalMs = 250;
     [SerializeField] private float minSpeechRms = 0.003f;
+    [SerializeField] private float microphoneReadIntervalSeconds = 0.12f;
+    [SerializeField] private float speechEndSilenceSeconds = 1.15f;
+    [SerializeField] private float minUtteranceSeconds = 0.45f;
+    [SerializeField] private float maxUtteranceSeconds = 18f;
 
     [Header("Speech Recognition")]
     [SerializeField] private bool autoStartListening = true;
@@ -38,7 +42,7 @@ public class SpeechTranscriptController : MonoBehaviour
     [SerializeField] private float uiRefreshIntervalSeconds = 0.15f;
     [SerializeField] private float androidRestartDelaySeconds = 0.35f;
     [SerializeField] private bool commitOnlyCompleteSentences = true;
-    [SerializeField] private float sentenceSilenceCommitSeconds = 0.8f;
+    [SerializeField] private float sentenceSilenceCommitSeconds = 1.4f;
     [SerializeField] private bool useMockInEditorOrUnsupported = true;
 
     [Header("Notes")]
@@ -297,9 +301,13 @@ public class SpeechTranscriptController : MonoBehaviour
         audioChunkSeconds = Mathf.Clamp(audioChunkSeconds, 0.75f, 1.5f);
         microphoneStartupTimeoutSeconds = Mathf.Clamp(microphoneStartupTimeoutSeconds, 0.2f, 1f);
         minSpeechRms = Mathf.Min(minSpeechRms, 0.003f);
+        microphoneReadIntervalSeconds = Mathf.Clamp(microphoneReadIntervalSeconds, 0.08f, 0.2f);
+        speechEndSilenceSeconds = Mathf.Clamp(speechEndSilenceSeconds, 0.95f, 1.6f);
+        minUtteranceSeconds = Mathf.Clamp(minUtteranceSeconds, 0.25f, 0.8f);
+        maxUtteranceSeconds = Mathf.Max(maxUtteranceSeconds, 12f);
         rollingWindowSeconds = Mathf.Max(rollingWindowSeconds, 45f);
         uiRefreshIntervalSeconds = Mathf.Min(uiRefreshIntervalSeconds, 0.15f);
-        sentenceSilenceCommitSeconds = Mathf.Min(sentenceSilenceCommitSeconds, 0.8f);
+        sentenceSilenceCommitSeconds = Mathf.Clamp(sentenceSilenceCommitSeconds, 1.2f, 2.2f);
     }
 
     private System.Collections.IEnumerator CaptureStreamingSpeechLoop()
@@ -487,77 +495,151 @@ public class SpeechTranscriptController : MonoBehaviour
     {
         string deviceName = ResolveMicrophoneDeviceName();
         int sampleRateHz = ResolveMicrophoneSampleRate(deviceName);
-        float captureSeconds = Mathf.Max(0.5f, audioChunkSeconds);
-        int clipLengthSeconds = Mathf.Max(2, Mathf.CeilToInt(captureSeconds) + 1);
 
-        while (isListening && useBackendSpeechTranslation)
+        if (speechBackendMockMode)
         {
-            AudioClip clip = null;
-            int samplePosition = 0;
-            if (!speechBackendMockMode)
-            {
-                clip = Microphone.Start(deviceName, false, clipLengthSeconds, sampleRateHz);
-                float waitUntil = Time.unscaledTime + Mathf.Max(0.2f, microphoneStartupTimeoutSeconds);
-                while (isListening && Microphone.GetPosition(deviceName) <= 0 && Time.unscaledTime < waitUntil)
-                {
-                    yield return null;
-                }
+            yield return CaptureMockBackendSpeechLoop(sampleRateHz);
+            backendSpeechCoroutine = null;
+            yield break;
+        }
 
-                if (isListening && Microphone.GetPosition(deviceName) <= 0)
-                {
-                    SetStatus("Microphone did not start");
-                    if (Microphone.IsRecording(deviceName))
-                    {
-                        Microphone.End(deviceName);
-                    }
-                    yield return new WaitForSeconds(0.5f);
-                    continue;
-                }
+        int clipLengthSeconds = Mathf.Max(30, Mathf.CeilToInt(maxUtteranceSeconds) + 8);
+        AudioClip clip = Microphone.Start(deviceName, true, clipLengthSeconds, sampleRateHz);
+        if (clip == null)
+        {
+            SetStatus("Microphone did not start");
+            backendSpeechCoroutine = null;
+            yield break;
+        }
 
-                float stopAt = Time.unscaledTime + Mathf.Clamp(captureSeconds, 0.5f, clipLengthSeconds - 0.25f);
-                while (isListening && Time.unscaledTime < stopAt && Microphone.IsRecording(deviceName))
-                {
-                    samplePosition = Microphone.GetPosition(deviceName);
-                    yield return null;
-                }
+        float waitUntil = Time.unscaledTime + Mathf.Max(0.2f, microphoneStartupTimeoutSeconds);
+        while (isListening && Microphone.GetPosition(deviceName) <= 0 && Time.unscaledTime < waitUntil)
+        {
+            yield return null;
+        }
 
-                samplePosition = Mathf.Max(samplePosition, Microphone.GetPosition(deviceName));
-            }
-            else
-            {
-                yield return new WaitForSeconds(Mathf.Max(0.5f, audioChunkSeconds));
-            }
-
-            if (!speechBackendMockMode && Microphone.IsRecording(deviceName))
+        if (isListening && Microphone.GetPosition(deviceName) <= 0)
+        {
+            SetStatus("Microphone did not start");
+            if (Microphone.IsRecording(deviceName))
             {
                 Microphone.End(deviceName);
             }
+            backendSpeechCoroutine = null;
+            yield break;
+        }
+
+        int channels = clip != null ? Mathf.Max(1, clip.channels) : 1;
+        int readPosition = Microphone.GetPosition(deviceName);
+        var utteranceSamples = new List<float>(Mathf.Max(1, sampleRateHz * channels * 4));
+        bool hasSpeech = false;
+        float lastSpeechAt = -1f;
+        float nextIdleStatusAt = 0f;
+        float readInterval = Mathf.Clamp(microphoneReadIntervalSeconds, 0.06f, 0.25f);
+        float endSilence = Mathf.Max(0.6f, speechEndSilenceSeconds);
+
+        SetStatus("Listening");
+
+        while (isListening && useBackendSpeechTranslation)
+        {
+            yield return new WaitForSeconds(readInterval);
+
+            if (!Microphone.IsRecording(deviceName))
+            {
+                SetStatus("Microphone stopped");
+                break;
+            }
+
+            int currentPosition = Microphone.GetPosition(deviceName);
+            float[] samples = ReadMicrophoneSamples(clip, ref readPosition, currentPosition);
+            if (samples.Length == 0)
+            {
+                continue;
+            }
+
+            bool voiceDetected = CalculateRms(samples) >= minSpeechRms;
+            float now = Time.unscaledTime;
+
+            if (voiceDetected)
+            {
+                if (!hasSpeech)
+                {
+                    utteranceSamples.Clear();
+                    SetStatus("Listening to sentence");
+                }
+
+                hasSpeech = true;
+                lastSpeechAt = now;
+                AppendSamples(utteranceSamples, samples);
+            }
+            else if (hasSpeech)
+            {
+                AppendSamples(utteranceSamples, samples);
+            }
+            else if (now >= nextIdleStatusAt)
+            {
+                SetStatus("Listening");
+                nextIdleStatusAt = now + 1f;
+            }
+
+            if (!hasSpeech)
+            {
+                continue;
+            }
+
+            float utteranceSeconds = utteranceSamples.Count / (float)Mathf.Max(1, sampleRateHz * channels);
+            bool hasMinimumAudio = utteranceSeconds >= Mathf.Max(0.1f, minUtteranceSeconds);
+            bool endedBySilence = !voiceDetected && lastSpeechAt > 0f && now - lastSpeechAt >= endSilence;
+            bool endedByLength = utteranceSeconds >= Mathf.Max(2f, maxUtteranceSeconds);
+            if (!hasMinimumAudio || (!endedBySilence && !endedByLength))
+            {
+                continue;
+            }
+
+            float[] utterance = utteranceSamples.ToArray();
+            utteranceSamples.Clear();
+            hasSpeech = false;
+            lastSpeechAt = -1f;
+
+            SetStatus(endedByLength ? "Transcribing long sentence" : "Transcribing sentence");
+            Task task = ProcessAudioChunkAsync(utterance, channels, sampleRateHz);
+            while (!task.IsCompleted)
+            {
+                yield return null;
+            }
+
+            if (task.IsFaulted)
+            {
+                string message = task.Exception != null && task.Exception.InnerException != null
+                    ? task.Exception.InnerException.Message
+                    : "Speech backend request failed";
+                Debug.LogWarning("[SpeechTranscript] " + message);
+                SetStatus(message);
+                yield return new WaitForSeconds(0.8f);
+            }
+            else
+            {
+                SetStatus("Listening");
+            }
+        }
+
+        if (Microphone.IsRecording(deviceName))
+        {
+            Microphone.End(deviceName);
+        }
+
+        backendSpeechCoroutine = null;
+    }
+
+    private System.Collections.IEnumerator CaptureMockBackendSpeechLoop(int sampleRateHz)
+    {
+        while (isListening && useBackendSpeechTranslation && speechBackendMockMode)
+        {
+            yield return new WaitForSeconds(Mathf.Max(0.5f, audioChunkSeconds));
 
             if (!isListening) break;
 
-            float[] samples = new float[0];
-            int channels = 1;
-            if (!speechBackendMockMode)
-            {
-                if (clip == null || samplePosition <= 0)
-                {
-                    SetStatus("No speech samples captured");
-                    yield return new WaitForSeconds(0.2f);
-                    continue;
-                }
-
-                channels = Mathf.Max(1, clip.channels);
-                samples = new float[Mathf.Min(samplePosition * channels, clip.samples * channels)];
-                clip.GetData(samples, 0);
-
-                if (CalculateRms(samples) < minSpeechRms)
-                {
-                    SetStatus("Listening");
-                    continue;
-                }
-            }
-
-            Task task = ProcessAudioChunkAsync(samples, channels, sampleRateHz);
+            Task task = ProcessAudioChunkAsync(new float[0], 1, sampleRateHz);
             while (!task.IsCompleted)
             {
                 yield return null;
@@ -573,8 +655,6 @@ public class SpeechTranscriptController : MonoBehaviour
                 yield return new WaitForSeconds(0.8f);
             }
         }
-
-        backendSpeechCoroutine = null;
     }
 
     private async Task ProcessAudioChunkAsync(float[] samples, int channels, int sampleRateHz)
@@ -1330,6 +1410,16 @@ public class SpeechTranscriptController : MonoBehaviour
         }
 
         return Mathf.Sqrt((float)(sum / samples.Length));
+    }
+
+    private static void AppendSamples(List<float> target, float[] samples)
+    {
+        if (target == null || samples == null || samples.Length == 0) return;
+
+        for (int i = 0; i < samples.Length; i++)
+        {
+            target.Add(samples[i]);
+        }
     }
 
     private static float[] ReadMicrophoneSamples(AudioClip clip, ref int readPosition, int currentPosition)
