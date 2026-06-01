@@ -113,7 +113,7 @@ public class SpeechTranscriptController : MonoBehaviour
         }
         else
         {
-            SetStatus("Transcript paused");
+            SetStatus("Transcript ready");
         }
     }
 
@@ -1181,7 +1181,14 @@ public class SpeechTranscriptController : MonoBehaviour
     private void ToggleModal()
     {
         if (modalRoot == null) return;
-        modalRoot.SetActive(!modalRoot.activeSelf);
+
+        bool shouldShow = !modalRoot.activeSelf;
+        modalRoot.SetActive(shouldShow);
+        if (shouldShow && !isListening)
+        {
+            StartListening();
+        }
+
         uiDirty = true;
     }
 
