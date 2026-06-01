@@ -888,7 +888,7 @@ public class ButtonController : MonoBehaviour
         string message = ex != null ? ex.Message ?? string.Empty : string.Empty;
         if (ContainsIgnoreCase(message, "127.0.0.1") || ContainsIgnoreCase(message, "localhost"))
         {
-            return "Backend URL dang la 127.0.0.1 tren Android. Doi sang http://192.168.1.8:5000.";
+            return "Backend dang la 127.0.0.1. Doi sang IP LAN.";
         }
 
         if (ContainsIgnoreCase(message, "CLEARTEXT"))
@@ -896,11 +896,20 @@ public class ButtonController : MonoBehaviour
             return "Android dang chan HTTP. APK can bat cleartext traffic hoac dung HTTPS.";
         }
 
+        if (ContainsIgnoreCase(message, "Backend request failed (503)") ||
+            ContainsIgnoreCase(message, "response code: 503"))
+        {
+            return "Backend 503: xem log OCR/API key.";
+        }
+
         if (ContainsIgnoreCase(message, "Cannot connect") ||
+            ContainsIgnoreCase(message, "Failed to connect") ||
+            ContainsIgnoreCase(message, "Connection refused") ||
+            ContainsIgnoreCase(message, "No route") ||
             ContainsIgnoreCase(message, "timed out") ||
             ContainsIgnoreCase(message, "resolve"))
         {
-            return "Khong noi duoc backend. Kiem tra cung Wi-Fi, backend 0.0.0.0:5000 va firewall.";
+            return $"Backend offline: {GetBackendHostPortForMessage()}";
         }
 
         return "Khong the dich. Kiem tra backend va bam Thu lai.";
@@ -911,7 +920,7 @@ public class ButtonController : MonoBehaviour
         string message = ex != null ? ex.Message ?? string.Empty : string.Empty;
         if (ContainsIgnoreCase(message, "127.0.0.1") || ContainsIgnoreCase(message, "localhost"))
         {
-            return "Backend Android dang tro sai 127.0.0.1. Hay doi sang IP LAN 192.168.1.8.";
+            return "Backend sai 127.0.0.1. Doi sang IP LAN.";
         }
 
         if (ContainsIgnoreCase(message, "CLEARTEXT"))
@@ -919,14 +928,58 @@ public class ButtonController : MonoBehaviour
             return "Android dang chan HTTP backend. Ban APK can bat cleartext traffic.";
         }
 
+        if (ContainsIgnoreCase(message, "Backend request failed (503)") ||
+            ContainsIgnoreCase(message, "response code: 503"))
+        {
+            return "Backend 503: xem log OCR/API key.";
+        }
+
         if (ContainsIgnoreCase(message, "Cannot connect") ||
+            ContainsIgnoreCase(message, "Failed to connect") ||
+            ContainsIgnoreCase(message, "Connection refused") ||
+            ContainsIgnoreCase(message, "No route") ||
             ContainsIgnoreCase(message, "timed out") ||
             ContainsIgnoreCase(message, "resolve"))
         {
-            return "Khong noi duoc backend. Kiem tra cung Wi-Fi va firewall cong 5000.";
+            return $"Backend offline: {GetBackendHostPortForMessage()}";
         }
 
         return string.Empty;
+    }
+
+    private string GetBackendUrlForMessage()
+    {
+        if (httpPipelineClient == null)
+        {
+            return HttpPipelineClient.DefaultAndroidLanBackendUrl;
+        }
+
+        string backendUrl = httpPipelineClient.GetBackendBaseUrl();
+        return string.IsNullOrWhiteSpace(backendUrl)
+            ? HttpPipelineClient.DefaultAndroidLanBackendUrl
+            : backendUrl;
+    }
+
+    private string GetBackendPortForMessage()
+    {
+        string backendUrl = GetBackendUrlForMessage();
+        if (Uri.TryCreate(backendUrl, UriKind.Absolute, out Uri uri) && uri.Port > 0)
+        {
+            return uri.Port.ToString();
+        }
+
+        return "5050";
+    }
+
+    private string GetBackendHostPortForMessage()
+    {
+        string backendUrl = GetBackendUrlForMessage();
+        if (Uri.TryCreate(backendUrl, UriKind.Absolute, out Uri uri))
+        {
+            return $"{uri.Host}:{GetBackendPortForMessage()}";
+        }
+
+        return backendUrl;
     }
 
     private static bool ContainsIgnoreCase(string value, string pattern)

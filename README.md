@@ -91,12 +91,12 @@ pip install -r backend\requirements.txt
 python backend\app.py
 ```
 
-Backend mặc định chạy ở `http://127.0.0.1:5000`.
+Backend mặc định chạy ở `http://127.0.0.1:5050`.
 
 ### 3. Kiểm tra backend
 
 ```powershell
-Invoke-WebRequest http://127.0.0.1:5000/health | Select-Object -ExpandProperty Content
+Invoke-WebRequest http://127.0.0.1:5050/health | Select-Object -ExpandProperty Content
 ```
 
 ### 4. Gửi thử một frame mẫu

@@ -11,7 +11,8 @@ using UnityEngine.Networking;
 /// </summary>
 public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 {
-    private const string AndroidLanBackendUrl = "http://192.168.1.16:5050";
+    public const string DefaultAndroidLanBackendUrl = "http://192.168.1.16:5050";
+    private const string AndroidLanBackendUrl = DefaultAndroidLanBackendUrl;
     private const string DefaultLoopbackBaseUrl = "http://127.0.0.1:5050";
     private const string DefaultLoopbackFrameUrl = "http://127.0.0.1:5050/pipeline/frame";
 
@@ -29,6 +30,8 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
     public string speechAskTextPath = "/speech/ask-text";
     public string healthPath = "/health";
     public int timeoutSeconds = 20;
+    [Tooltip("Keep this enabled so stale serialized endpointUrl values cannot override backendBaseUrl in Android builds.")]
+    public bool preferBackendBaseUrlForPipeline = true;
 
     private void Awake()
     {
@@ -50,6 +53,18 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
         }
 
         return response;
+    }
+
+    public string GetBackendBaseUrl()
+    {
+        NormalizeConfiguration();
+        return backendBaseUrl;
+    }
+
+    public string GetPipelineFrameUrl()
+    {
+        NormalizeConfiguration();
+        return ResolvePipelineFrameUrl();
     }
 
     public async Task<PipelineResponse> SendFrameAsync(
@@ -572,9 +587,17 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 
     private string ResolvePipelineFrameUrl()
     {
-        bool hasCustomEndpoint = !string.IsNullOrWhiteSpace(endpointUrl) &&
-                                 endpointUrl != DefaultLoopbackFrameUrl;
-        return hasCustomEndpoint ? endpointUrl : BuildUrl(pipelineFramePath);
+        if (preferBackendBaseUrlForPipeline ||
+            string.IsNullOrWhiteSpace(endpointUrl) ||
+            endpointUrl == DefaultLoopbackFrameUrl)
+        {
+            return BuildUrl(pipelineFramePath);
+        }
+
+        string configuredEndpoint = endpointUrl.Trim();
+        return IsAbsoluteHttpUrl(configuredEndpoint)
+            ? configuredEndpoint
+            : BuildUrl(configuredEndpoint);
     }
 
     private void NormalizeConfiguration()
@@ -587,7 +610,8 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
             ? string.Empty
             : endpointUrl.Trim();
 
-        if (endpointUrl == DefaultLoopbackFrameUrl && !IsLoopbackUrl(backendBaseUrl))
+        if (preferBackendBaseUrlForPipeline ||
+            (endpointUrl == DefaultLoopbackFrameUrl && !IsLoopbackUrl(backendBaseUrl)))
         {
             endpointUrl = BuildUrl(pipelineFramePath);
         }
@@ -627,14 +651,36 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 
         if (!string.IsNullOrWhiteSpace(error) &&
             (error.IndexOf("Cannot connect", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             error.IndexOf("Failed to connect", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             error.IndexOf("Connection refused", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             error.IndexOf("No route", StringComparison.OrdinalIgnoreCase) >= 0 ||
              error.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0 ||
              error.IndexOf("resolve", StringComparison.OrdinalIgnoreCase) >= 0))
         {
+            string port = TryGetUrlPort(url, "5050");
             return "Check that the phone and backend machine are on the same Wi-Fi, " +
-                   "the backend is listening on 0.0.0.0:5000, and Windows Firewall allows TCP 5000.";
+                   "the backend is listening on 0.0.0.0:" + port + ", " +
+                   "and the firewall allows TCP " + port + ". Current URL: " + url + ".";
         }
 
         return string.Empty;
+    }
+
+    private static bool IsAbsoluteHttpUrl(string url)
+    {
+        return !string.IsNullOrWhiteSpace(url) &&
+               (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                url.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string TryGetUrlPort(string url, string fallbackPort)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out Uri uri) && uri.Port > 0)
+        {
+            return uri.Port.ToString();
+        }
+
+        return fallbackPort;
     }
 
     private static bool IsLoopbackUrl(string url)

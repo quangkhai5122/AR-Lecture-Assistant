@@ -49,6 +49,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private float minOcrLabelHeightMeters = 0.026f;
     [SerializeField] private float maxOcrLabelWidthMeters = 1.40f;
     [SerializeField] private float maxOcrLabelHeightMeters = 0.42f;
+    [SerializeField] private bool logAnchorPlacementDiagnostics = true;
     [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
     [SerializeField] private bool useGoogleLensOverlayDefaults = true;
@@ -236,6 +237,23 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         int placed = 0;
+        int bboxSurfacePlaced = 0;
+        int centerHomographyPlaced = 0;
+        int raycastPlaced = 0;
+        int fallbackPlaced = 0;
+        int failedPlacement = 0;
+
+        if (logAnchorPlacementDiagnostics)
+        {
+            Debug.Log(
+                $"[ARLabelPlacer] Anchor diagnostics start: groups={labelGroups.Count}, " +
+                $"responseImage={response.image_width}x{response.image_height}, " +
+                $"screen={Screen.width}x{Screen.height}, " +
+                $"surfaceMapper={(surfaceMapper != null)}, " +
+                $"alignBboxSurface={alignOcrLabelsToDetectedText}, " +
+                $"fallbackPose={hasFallback}"
+            );
+        }
 
         for (int groupIndex = 0; groupIndex < labelGroups.Count; groupIndex++)
         {
@@ -252,14 +270,28 @@ public class ARLabelPlacer : MonoBehaviour
             Vector2 surfaceImagePoint = preserveOcrAnchorPositions
                 ? group.ImagePoint
                 : ResolveSurfaceMappedImagePoint(group, resolvedScreenPoint, response);
-            if (surfaceMapper != null &&
-                alignOcrLabelsToDetectedText &&
-                TryBuildSurfaceLabelPlacement(surfaceMapper, group, out SurfaceLabelPlacement placement))
+            string bboxSurfaceFailureReason = null;
+            SurfaceLabelPlacement placement = null;
+            if (surfaceMapper == null)
+            {
+                bboxSurfaceFailureReason = "surface-mapper-missing";
+            }
+            else if (!alignOcrLabelsToDetectedText)
+            {
+                bboxSurfaceFailureReason = "bbox-surface-disabled";
+            }
+            else if (TryBuildSurfaceLabelPlacement(surfaceMapper, group, out placement, out bboxSurfaceFailureReason))
             {
                 labelPlaced = CreateFixedLabel(text, placement, surfaceMapper.Surface.Plane);
                 if (labelPlaced)
                 {
+                    bboxSurfacePlaced++;
                     RegisterPlacedLabel(group.ScreenPoint, text);
+                    LogAnchorPlacementRoute("bbox-surface", groupIndex, group, text, placement.Pose, placement.SizeMeters);
+                }
+                else if (string.IsNullOrEmpty(bboxSurfaceFailureReason))
+                {
+                    bboxSurfaceFailureReason = "create-label-failed-after-bbox-surface-map";
                 }
             }
 
@@ -270,8 +302,18 @@ public class ARLabelPlacer : MonoBehaviour
                 labelPlaced = CreateFixedLabel(text, surfacePose, group.ScreenSize, surfaceMapper.Surface.Plane);
                 if (labelPlaced)
                 {
+                    centerHomographyPlaced++;
                     Vector2 registeredPoint = ImagePointToScreenPoint(surfaceImagePoint, response.image_width, response.image_height);
                     RegisterPlacedLabel(registeredPoint, text);
+                    LogAnchorPlacementRoute(
+                        "center-homography",
+                        groupIndex,
+                        group,
+                        text,
+                        surfacePose,
+                        null,
+                        $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}"
+                    );
                 }
             }
 
@@ -279,6 +321,16 @@ public class ARLabelPlacer : MonoBehaviour
             if (!labelPlaced && TryPlaceFixedLabel(text, screenPoint, !preserveOcrAnchorPositions))
             {
                 labelPlaced = true;
+                raycastPlaced++;
+                LogAnchorPlacementRoute(
+                    "raycast",
+                    groupIndex,
+                    group,
+                    text,
+                    null,
+                    null,
+                    $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}"
+                );
             }
 
             // Path C+D: Fallback — dùng center raycast hoặc cached plane pose
@@ -301,17 +353,46 @@ public class ARLabelPlacer : MonoBehaviour
                 labelPlaced = CreateFixedLabel(text, offsetPose, group.ScreenSize);
                 if (labelPlaced)
                 {
+                    fallbackPlaced++;
                     RegisterPlacedLabel(resolvedScreenPoint, text);
-                    Debug.Log($"[ARLabelPlacer] Group {groupIndex} placed via fallback pose");
+                    LogAnchorPlacementRoute(
+                        "fallback-pose",
+                        groupIndex,
+                        group,
+                        text,
+                        offsetPose,
+                        null,
+                        $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}, normalized=({normalizedX:F3},{normalizedY:F3})"
+                    );
                 }
             }
 
-            if (labelPlaced) placed++;
+            if (labelPlaced)
+            {
+                placed++;
+            }
+            else
+            {
+                failedPlacement++;
+                LogAnchorPlacementRoute(
+                    "not-placed",
+                    groupIndex,
+                    group,
+                    text,
+                    null,
+                    null,
+                    $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}, fallbackPose={hasFallback}"
+                );
+            }
         }
 
         LastAnchoredLabelCount = placed;
         LastPlacementMode = placed > 0 ? "world_anchor" : "none";
-        Debug.Log($"[ARLabelPlacer] Placed {placed} world-space anchored translation label(s).");
+        Debug.Log(
+            $"[ARLabelPlacer] Placed {placed} world-space anchored translation label(s). " +
+            $"routes: bbox-surface={bboxSurfacePlaced}, center-homography={centerHomographyPlaced}, " +
+            $"raycast={raycastPlaced}, fallback={fallbackPlaced}, failed={failedPlacement}"
+        );
         return placed;
     }
 
@@ -437,17 +518,21 @@ public class ARLabelPlacer : MonoBehaviour
     private bool TryBuildSurfaceLabelPlacement(
         ARDocumentSurfaceMapper surfaceMapper,
         TranslationLabelGroup group,
-        out SurfaceLabelPlacement placement
+        out SurfaceLabelPlacement placement,
+        out string failureReason
     )
     {
         placement = null;
+        failureReason = null;
         if (surfaceMapper == null || group == null || group.BBox.width <= 0f || group.BBox.height <= 0f)
         {
+            failureReason = "invalid-bbox-or-surface";
             return false;
         }
 
         if (!surfaceMapper.TryMapImageRectToSurfacePose(group.BBox, out Pose pose, out Vector2 rawSizeMeters))
         {
+            failureReason = "rect-to-surface-map-failed";
             return false;
         }
 
@@ -466,6 +551,73 @@ public class ARLabelPlacer : MonoBehaviour
             FitToPhysicalBounds = fitOcrLabelsToPhysicalTextBounds
         };
         return true;
+    }
+
+    private void LogAnchorPlacementRoute(
+        string route,
+        int groupIndex,
+        TranslationLabelGroup group,
+        string text,
+        Pose? pose = null,
+        Vector2? sizeMeters = null,
+        string detail = null
+    )
+    {
+        if (!logAnchorPlacementDiagnostics)
+        {
+            return;
+        }
+
+        string preview = BuildLogTextPreview(text);
+        string poseInfo = pose.HasValue
+            ? $", pose={FormatVector3(pose.Value.position)}"
+            : string.Empty;
+        string sizeInfo = sizeMeters.HasValue
+            ? $", sizeMeters={FormatVector2(sizeMeters.Value)}"
+            : string.Empty;
+        string detailInfo = string.IsNullOrEmpty(detail)
+            ? string.Empty
+            : $", {detail}";
+        string message =
+            $"[ARLabelPlacer] Anchor route={route} group={groupIndex}, " +
+            $"bbox={FormatRect(group.BBox)}, imagePoint={FormatVector2(group.ImagePoint)}, " +
+            $"screenPoint={FormatVector2(group.ScreenPoint)}, screenSize={FormatVector2(group.ScreenSize)}" +
+            $"{poseInfo}{sizeInfo}{detailInfo}, text=\"{preview}\"";
+
+        if (route == "not-placed" || route == "fallback-pose")
+        {
+            Debug.LogWarning(message);
+        }
+        else
+        {
+            Debug.Log(message);
+        }
+    }
+
+    private static string BuildLogTextPreview(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        string compact = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return compact.Length <= 48 ? compact : compact.Substring(0, 48) + "...";
+    }
+
+    private static string FormatRect(Rect rect)
+    {
+        return $"({rect.x:F1},{rect.y:F1},{rect.width:F1},{rect.height:F1})";
+    }
+
+    private static string FormatVector2(Vector2 value)
+    {
+        return $"({value.x:F1},{value.y:F1})";
+    }
+
+    private static string FormatVector3(Vector3 value)
+    {
+        return $"({value.x:F3},{value.y:F3},{value.z:F3})";
     }
 
     private List<TranslationLabelGroup> BuildTranslationLabelGroups(PipelineResponse response)
