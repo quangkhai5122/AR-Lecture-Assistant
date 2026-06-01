@@ -216,6 +216,7 @@ public class ButtonController : MonoBehaviour
             Debug.LogException(ex);
             string fullError = $"[{step}] {ex.GetType().Name}\n\n{ex.Message}\n\n{ex.StackTrace}";
             stateManager.SetError("Không dịch được. Hãy kiểm tra backend và bấm Thử lại.");
+            stateManager.SetError(BuildUserFacingBackendError(ex));
             debugPanel?.UpdateTrackingState($"Translate failed at {step}");
             if (showAdvancedControls)
             {
@@ -418,6 +419,11 @@ public class ButtonController : MonoBehaviour
         {
             Debug.LogWarning($"[ButtonController] Backend health check failed: {ex.Message}");
             debugPanel?.UpdateTrackingState("Backend offline");
+            string guidance = BuildHealthStatusMessage(ex);
+            if (!string.IsNullOrWhiteSpace(guidance))
+            {
+                stateManager?.SetStatusMessage(guidance);
+            }
         }
     }
 
@@ -868,5 +874,57 @@ public class ButtonController : MonoBehaviour
         {
             text.text = label;
         }
+    }
+
+    private string BuildUserFacingBackendError(Exception ex)
+    {
+        string message = ex != null ? ex.Message ?? string.Empty : string.Empty;
+        if (ContainsIgnoreCase(message, "127.0.0.1") || ContainsIgnoreCase(message, "localhost"))
+        {
+            return "Backend URL dang la 127.0.0.1 tren Android. Doi sang http://192.168.1.8:5000.";
+        }
+
+        if (ContainsIgnoreCase(message, "CLEARTEXT"))
+        {
+            return "Android dang chan HTTP. APK can bat cleartext traffic hoac dung HTTPS.";
+        }
+
+        if (ContainsIgnoreCase(message, "Cannot connect") ||
+            ContainsIgnoreCase(message, "timed out") ||
+            ContainsIgnoreCase(message, "resolve"))
+        {
+            return "Khong noi duoc backend. Kiem tra cung Wi-Fi, backend 0.0.0.0:5000 va firewall.";
+        }
+
+        return "Khong the dich. Kiem tra backend va bam Thu lai.";
+    }
+
+    private string BuildHealthStatusMessage(Exception ex)
+    {
+        string message = ex != null ? ex.Message ?? string.Empty : string.Empty;
+        if (ContainsIgnoreCase(message, "127.0.0.1") || ContainsIgnoreCase(message, "localhost"))
+        {
+            return "Backend Android dang tro sai 127.0.0.1. Hay doi sang IP LAN 192.168.1.8.";
+        }
+
+        if (ContainsIgnoreCase(message, "CLEARTEXT"))
+        {
+            return "Android dang chan HTTP backend. Ban APK can bat cleartext traffic.";
+        }
+
+        if (ContainsIgnoreCase(message, "Cannot connect") ||
+            ContainsIgnoreCase(message, "timed out") ||
+            ContainsIgnoreCase(message, "resolve"))
+        {
+            return "Khong noi duoc backend. Kiem tra cung Wi-Fi va firewall cong 5000.";
+        }
+
+        return string.Empty;
+    }
+
+    private static bool ContainsIgnoreCase(string value, string pattern)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+               value.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 }

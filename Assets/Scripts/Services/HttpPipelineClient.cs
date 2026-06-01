@@ -11,9 +11,13 @@ using UnityEngine.Networking;
 /// </summary>
 public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 {
+    private const string AndroidLanBackendUrl = "http://192.168.1.8:5000";
+    private const string DefaultLoopbackBaseUrl = "http://127.0.0.1:5000";
+    private const string DefaultLoopbackFrameUrl = "http://127.0.0.1:5000/pipeline/frame";
+
     [Header("Backend")]
-    public string backendBaseUrl = "http://127.0.0.1:5000";
-    public string endpointUrl = "http://127.0.0.1:5000/pipeline/frame";
+    public string backendBaseUrl = AndroidLanBackendUrl;
+    public string endpointUrl = DefaultLoopbackFrameUrl;
     public string pipelineFramePath = "/pipeline/frame";
     public string pipelineAliasPath = "/pipeline";
     public string ocrPath = "/ocr";
@@ -25,6 +29,16 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
     public string speechAskTextPath = "/speech/ask-text";
     public string healthPath = "/health";
     public int timeoutSeconds = 20;
+
+    private void Awake()
+    {
+        NormalizeConfiguration();
+    }
+
+    private void OnValidate()
+    {
+        NormalizeConfiguration();
+    }
 
     public async Task<BackendHealthResponse> CheckHealthAsync()
     {
@@ -486,6 +500,9 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 
     private async Task<string> SendGetAsync(string url)
     {
+        ThrowIfAndroidLoopbackUrl(url);
+        Debug.Log("[HttpPipelineClient] GET " + url);
+
         using (var request = UnityWebRequest.Get(url))
         {
             request.timeout = timeoutSeconds;
@@ -500,6 +517,9 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 
     private async Task<string> SendJsonAsync(string url, string json)
     {
+        ThrowIfAndroidLoopbackUrl(url);
+        Debug.Log("[HttpPipelineClient] POST " + url);
+
         byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
 
         using (var request = new UnityWebRequest(url, "POST"))
@@ -522,7 +542,11 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
         bool hasError = request.result != UnityWebRequest.Result.Success;
         if (hasError)
         {
-            throw new Exception($"Backend request failed: {request.error}\n{request.downloadHandler.text}");
+            string responseText = request.downloadHandler != null ? request.downloadHandler.text : string.Empty;
+            string hint = BuildFailureHint(request.url, request.error);
+            throw new Exception(
+                $"Backend request failed ({request.responseCode}) {request.url}: {request.error}\n{hint}\n{responseText}"
+            );
         }
     }
 
@@ -540,7 +564,7 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
         }
 
         string baseUrl = string.IsNullOrWhiteSpace(backendBaseUrl)
-            ? "http://127.0.0.1:5000"
+            ? DefaultLoopbackBaseUrl
             : backendBaseUrl.TrimEnd('/');
         string normalizedPath = path.StartsWith("/") ? path : "/" + path;
         return baseUrl + normalizedPath;
@@ -549,8 +573,85 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
     private string ResolvePipelineFrameUrl()
     {
         bool hasCustomEndpoint = !string.IsNullOrWhiteSpace(endpointUrl) &&
-                                 endpointUrl != "http://127.0.0.1:5000/pipeline/frame";
+                                 endpointUrl != DefaultLoopbackFrameUrl;
         return hasCustomEndpoint ? endpointUrl : BuildUrl(pipelineFramePath);
+    }
+
+    private void NormalizeConfiguration()
+    {
+        backendBaseUrl = string.IsNullOrWhiteSpace(backendBaseUrl)
+            ? AndroidLanBackendUrl
+            : backendBaseUrl.Trim().TrimEnd('/');
+
+        endpointUrl = string.IsNullOrWhiteSpace(endpointUrl)
+            ? string.Empty
+            : endpointUrl.Trim();
+
+        if (endpointUrl == DefaultLoopbackFrameUrl && !IsLoopbackUrl(backendBaseUrl))
+        {
+            endpointUrl = BuildUrl(pipelineFramePath);
+        }
+    }
+
+    private void ThrowIfAndroidLoopbackUrl(string url)
+    {
+        if (Application.platform != RuntimePlatform.Android)
+        {
+            return;
+        }
+
+        if (!IsLoopbackUrl(url))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "Android cannot use 127.0.0.1/localhost as backend URL. " +
+            "Set UICanvas -> HttpPipelineClient.backendBaseUrl to " + AndroidLanBackendUrl + "."
+        );
+    }
+
+    private string BuildFailureHint(string url, string error)
+    {
+        if (Application.platform == RuntimePlatform.Android && IsLoopbackUrl(url))
+        {
+            return "App is still pointing to 127.0.0.1/localhost on Android. " +
+                   "Use the laptop LAN IP, for example " + AndroidLanBackendUrl + ".";
+        }
+
+        if (!string.IsNullOrWhiteSpace(error) &&
+            error.IndexOf("CLEARTEXT", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return "Android blocked HTTP cleartext traffic. Enable usesCleartextTraffic or switch to HTTPS.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(error) &&
+            (error.IndexOf("Cannot connect", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             error.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0 ||
+             error.IndexOf("resolve", StringComparison.OrdinalIgnoreCase) >= 0))
+        {
+            return "Check that the phone and backend machine are on the same Wi-Fi, " +
+                   "the backend is listening on 0.0.0.0:5000, and Windows Firewall allows TCP 5000.";
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsLoopbackUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri uri))
+        {
+            return false;
+        }
+
+        return uri.IsLoopback ||
+               string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase);
     }
 
     private string[] MergeWarnings(string[] first, string[] second)

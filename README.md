@@ -130,15 +130,16 @@ Thư mục `Builds/` được ignore. Nếu build không vào Gradle và log bá
 
 ## Cấu hình backend URL cho Unity
 
-`HttpPipelineClient` hiện có default:
+`HttpPipelineClient` hiện có default trong code là LAN URL mẫu cho Android, còn `MainScene` hiện đang serialize theo máy build hiện tại:
 
-- `backendBaseUrl = http://127.0.0.1:5000`
-- `endpointUrl = http://127.0.0.1:5000/pipeline/frame`
+- `backendBaseUrl = http://192.168.1.8:5000`
+- `endpointUrl = http://192.168.1.8:5000/pipeline/frame`
 
 Nhưng ở runtime, luồng chính ưu tiên `backendBaseUrl`. Vì vậy:
 
 - Nếu chạy Unity Editor trên cùng máy với backend: đặt `backendBaseUrl` thành `http://127.0.0.1:5000`
 - Nếu chạy trên điện thoại Android: đặt `backendBaseUrl` thành `http://<LAN-IP-cua-may-chay-backend>:5000`
+- Nếu IP Wi-Fi của máy build thay đổi, phải sửa lại `backendBaseUrl` trong `UICanvas` trước khi build APK mới.
 
 Có hai cách cấu hình:
 

@@ -10,7 +10,7 @@
     <uses-feature android:name="android.hardware.camera.ar" android:required="true" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
-    <application>
+    <application android:usesCleartextTraffic="true">
         <activity android:name="com.unity3d.player.UnityPlayerActivity"
                   android:theme="@style/UnityThemeSelector"
                   android:exported="true">
