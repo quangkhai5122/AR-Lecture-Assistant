@@ -44,9 +44,9 @@ Copy-Item .env.example .env
 Các nhóm biến quan trọng:
 
 - Flask: `HOST`, `PORT`, `FLASK_DEBUG`
-- OCR: `OCR_PROVIDER`, `TESSERACT_CMD`, `OCR_MIN_CONFIDENCE`
+- OCR: `OCR_PROVIDER`, `GOOGLE_VISION_API_KEY`, `TESSERACT_CMD`, `OCR_MIN_CONFIDENCE`
 - PaddleOCR: `PADDLEOCR_LANG`, `PADDLEOCR_USE_GPU`, `PADDLEOCR_DEVICE`
-- Translate: `TRANSLATION_PROVIDER`, `LIBRETRANSLATE_URL`, `GOOGLE_TRANSLATE_API_KEY`
+- Translate: `TRANSLATION_PROVIDER`, `LIBRETRANSLATE_URL`, `GOOGLE_TRANSLATE_API_KEY`, `GOOGLE_CLOUD_API_KEY`
 - Speech: `SPEECH_PROVIDER`, `GOOGLE_SPEECH_API_KEY`
 - Gemini: `LLM_PROVIDER`, `GEMINI_API_KEY`, `GEMINI_MODEL`
 
@@ -70,14 +70,14 @@ Từ root repo:
 python scripts\post_sample_frame.py --image samples\slides\slide_01.png --mock
 ```
 
-OCR thật + mock translate:
+Google Vision OCR + Google Translate thật:
 
 ```powershell
 python scripts\post_sample_frame.py `
   --image samples\slides\slide_01.png `
   --real `
-  --ocr-provider tesseract `
-  --translation-provider mock
+  --ocr-provider google `
+  --translation-provider google
 ```
 
 ## Provider
@@ -85,6 +85,7 @@ python scripts\post_sample_frame.py `
 ### OCR
 
 - `mock`
+- `google`
 - `tesseract`
 - `paddleocr`
 

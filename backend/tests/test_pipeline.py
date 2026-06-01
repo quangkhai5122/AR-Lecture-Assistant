@@ -230,6 +230,102 @@ def test_tesseract_ocr_on_sample_slide(monkeypatch):
     assert all(0 <= block["confidence"] <= 1 for block in data["blocks"])
 
 
+def test_google_vision_ocr_provider_uses_api_key(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "responses": [
+                    {
+                        "fullTextAnnotation": {
+                            "pages": [
+                                {
+                                    "blocks": [
+                                        {
+                                            "paragraphs": [
+                                                {
+                                                    "words": [
+                                                        {
+                                                            "symbols": [{"text": "Hello"}],
+                                                            "boundingBox": {
+                                                                "vertices": [
+                                                                    {"x": 5, "y": 10},
+                                                                    {"x": 35, "y": 10},
+                                                                    {"x": 35, "y": 30},
+                                                                    {"x": 5, "y": 30},
+                                                                ]
+                                                            },
+                                                            "confidence": 0.98,
+                                                        },
+                                                        {
+                                                            "symbols": [{"text": "slide"}],
+                                                            "boundingBox": {
+                                                                "vertices": [
+                                                                    {"x": 42, "y": 10},
+                                                                    {"x": 84, "y": 10},
+                                                                    {"x": 84, "y": 30},
+                                                                    {"x": 42, "y": 30},
+                                                                ]
+                                                            },
+                                                            "confidence": 0.96,
+                                                        },
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(url, params, json, timeout):
+        calls.append((url, params, json, timeout))
+        return FakeResponse()
+
+    monkeypatch.setenv("GOOGLE_VISION_API_KEY", "vision-key")
+    monkeypatch.setattr("services.ocr_service.requests.post", fake_post)
+
+    service = OCRService()
+    result = service.recognize(
+        image_base64=_image_base64(width=120, height=60),
+        force_mock=False,
+        provider="google",
+    )
+
+    assert result.provider == "google"
+    assert result.mock_used is False
+    assert result.blocks[0]["text"] == "Hello slide"
+    assert result.blocks[0]["bbox"] == [5, 10, 84, 30]
+    assert calls[0][1] == {"key": "vision-key"}
+    assert calls[0][2]["requests"][0]["features"][0]["type"] == "DOCUMENT_TEXT_DETECTION"
+
+
+def test_google_vision_ocr_requires_api_key(monkeypatch):
+    for key in (
+        "GOOGLE_VISION_API_KEY",
+        "GOOGLE_CLOUD_VISION_API_KEY",
+        "GOOGLE_CLOUD_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    service = OCRService()
+    with pytest.raises(Exception) as exc_info:
+        service.recognize(
+            image_base64=_image_base64(width=120, height=60),
+            force_mock=False,
+            provider="google",
+        )
+
+    assert "GOOGLE_VISION_API_KEY" in str(exc_info.value)
+
+
 @pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract binary is not installed")
 def test_pipeline_uses_real_tesseract_ocr_with_mock_translation(monkeypatch):
     pytest.importorskip("pytesseract")
@@ -745,7 +841,12 @@ def test_google_translation_provider_uses_api_key_and_cache(monkeypatch):
 
 
 def test_google_translation_requires_api_key(monkeypatch):
-    monkeypatch.delenv("GOOGLE_TRANSLATE_API_KEY", raising=False)
+    for key in (
+        "GOOGLE_TRANSLATE_API_KEY",
+        "GOOGLE_CLOUD_TRANSLATE_API_KEY",
+        "GOOGLE_CLOUD_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
     service = TranslationService()
     with pytest.raises(Exception) as exc_info:
         service.translate_batch(["Hello"], target_language="vi", force_mock=False, provider="google")

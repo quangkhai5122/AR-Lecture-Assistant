@@ -93,8 +93,8 @@ def health():
         "service": "ar-lecture-translator-backend",
         "mode": "mvp",
         "provider": {
-            "ocr": os.getenv("OCR_PROVIDER", "tesseract"),
-            "translation": os.getenv("TRANSLATION_PROVIDER", "mock"),
+            "ocr": os.getenv("OCR_PROVIDER", "google"),
+            "translation": os.getenv("TRANSLATION_PROVIDER", "google"),
             "speech": os.getenv("SPEECH_PROVIDER", "google"),
             "llm": os.getenv("LLM_PROVIDER", "gemini"),
         },

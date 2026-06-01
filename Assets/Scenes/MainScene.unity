@@ -2960,11 +2960,11 @@ MonoBehaviour:
   translationService: {fileID: 968175880}
   arPlaneManager: {fileID: 1716747708}
   useBackendPipeline: 1
-  backendMockMode: 1
+  backendMockMode: 0
   targetLanguage: vi
   backendPipelineMode: 0
-  ocrProvider:
-  translationProvider: mock
+  ocrProvider: google
+  translationProvider: google
   frameCaptureService: {fileID: 1593249883}
   httpPipelineClient: {fileID: 1593249884}
   scanButton: {fileID: 609646638}

@@ -22,7 +22,7 @@ def main():
     mode.add_argument("--mock", action="store_true", help="Use backend mock mode")
     mode.add_argument("--real", action="store_true", help="Use real OCR/translation providers")
     parser.add_argument("--target-language", default="vi")
-    parser.add_argument("--ocr-provider", choices=["mock", "paddleocr", "tesseract"])
+    parser.add_argument("--ocr-provider", choices=["mock", "paddleocr", "tesseract", "google"])
     parser.add_argument("--translation-provider", choices=["mock", "libretranslate", "google"])
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds")
     args = parser.parse_args()

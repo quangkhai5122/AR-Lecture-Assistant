@@ -124,7 +124,7 @@ class TranslationService:
         if force_mock:
             return "mock"
 
-        selected = (provider or os.getenv("TRANSLATION_PROVIDER") or "libretranslate").strip().lower()
+        selected = (provider or os.getenv("TRANSLATION_PROVIDER") or "google").strip().lower()
         if selected not in self.SUPPORTED_PROVIDERS:
             raise PipelineError(
                 "Unsupported translation provider "
@@ -143,10 +143,14 @@ class TranslationService:
             return {"url": libre_url}
 
         if provider == "google":
-            api_key = os.getenv("GOOGLE_TRANSLATE_API_KEY")
+            api_key = (
+                os.getenv("GOOGLE_TRANSLATE_API_KEY")
+                or os.getenv("GOOGLE_CLOUD_TRANSLATE_API_KEY")
+                or os.getenv("GOOGLE_CLOUD_API_KEY")
+            )
             if not api_key:
                 raise PipelineError(
-                    "TRANSLATION_PROVIDER=google requires GOOGLE_TRANSLATE_API_KEY.",
+                    "TRANSLATION_PROVIDER=google requires GOOGLE_TRANSLATE_API_KEY or GOOGLE_CLOUD_API_KEY.",
                     code="translation_provider_not_configured",
                 )
             return {

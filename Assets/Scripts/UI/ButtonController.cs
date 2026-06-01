@@ -25,11 +25,11 @@ public class ButtonController : MonoBehaviour
 
     [Header("OCR / Translate Pipeline")]
     [SerializeField] private bool useBackendPipeline = true;
-    [SerializeField] private bool backendMockMode = true;
+    [SerializeField] private bool backendMockMode = false;
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private BackendPipelineMode backendPipelineMode = BackendPipelineMode.PipelineFrame;
-    [SerializeField] private string ocrProvider = "";
-    [SerializeField] private string translationProvider = "mock";
+    [SerializeField] private string ocrProvider = "google";
+    [SerializeField] private string translationProvider = "google";
     [SerializeField] private FrameCaptureService frameCaptureService;
     [SerializeField] private HttpPipelineClient httpPipelineClient;
 
