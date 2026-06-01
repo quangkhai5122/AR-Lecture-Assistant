@@ -21,6 +21,7 @@ public class UIManager : MonoBehaviour
     [SerializeField] private DebugPanelController debugPanel;
     [SerializeField] private SpeechTranscriptController speechTranscriptController;
     [SerializeField] private bool showTranscriptControl = true;
+    [SerializeField] private bool showScreenSubtitleAfterTranslation = false;
 
     [Header("=== Services ===")]
     [SerializeField] private MockOCRService ocrService;
@@ -292,10 +293,12 @@ public class UIManager : MonoBehaviour
                 break;
 
             case AppState.Translating:
+                if (crosshair != null) crosshair.SetActive(false);
                 // Đang xử lý, có thể hiện loading indicator
                 break;
 
             case AppState.Anchored:
+                if (crosshair != null) crosshair.SetActive(false);
                 // Label đã được đặt thành công
                 break;
 
@@ -352,9 +355,18 @@ public class UIManager : MonoBehaviour
             labelPlacer.PlaceFixedLabel(result.TranslatedText, screenCenter);
 
             // Bước 4: Hiện subtitle
-            string speechText = await ocrService.RecognizeSpeechAsync();
-            TranslationResult speechResult = await translationService.TranslateAsync(speechText);
-            labelPlacer.ShowSubtitle(speechResult.TranslatedText);
+            if (!showScreenSubtitleAfterTranslation ||
+                labelPlacer == null ||
+                labelPlacer.UsesScreenSpaceTranslationOverlay)
+            {
+                labelPlacer?.HideSubtitle();
+            }
+            else
+            {
+                string speechText = await ocrService.RecognizeSpeechAsync();
+                TranslationResult speechResult = await translationService.TranslateAsync(speechText);
+                labelPlacer.ShowSubtitle(speechResult.TranslatedText);
+            }
 
             stateManager.SetState(AppState.Anchored);
         }

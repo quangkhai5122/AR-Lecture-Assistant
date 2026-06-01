@@ -43,6 +43,7 @@ public class ButtonController : MonoBehaviour
     [Header("UI Mode")]
     [SerializeField] private bool useCompactDemoControls = false;
     [SerializeField] private bool showTranslationVisibilityButton = true;
+    [SerializeField] private bool showScreenSubtitleAfterTranslation = false;
 
     [Header("Debug")]
     [SerializeField] private bool showAdvancedControls = false;
@@ -198,8 +199,14 @@ public class ButtonController : MonoBehaviour
                 return;
             }
 
-            step = "4-subtitle";
-            if (response.blocks != null && response.blocks.Count > 0)
+            step = "4-overlay-cleanup";
+            if (!showScreenSubtitleAfterTranslation ||
+                labelPlacer == null ||
+                labelPlacer.UsesScreenSpaceTranslationOverlay)
+            {
+                labelPlacer?.HideSubtitle();
+            }
+            else if (response.blocks != null && response.blocks.Count > 0)
             {
                 string subtitle = response.blocks[0].translated_text;
                 if (!string.IsNullOrWhiteSpace(subtitle))

@@ -93,7 +93,7 @@ public class ARSurfaceLockController : MonoBehaviour
         if (raycastController != null && raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit))
         {
             TransitionTo(ARSurfaceLockState.PlaneFound);
-            LockSurface(hit);
+            LockSurface(hit, plane);
             return;
         }
 
@@ -111,16 +111,26 @@ public class ARSurfaceLockController : MonoBehaviour
 
     public void LockSurface(ARRaycastHit hit)
     {
-        LockSurface(hit.pose, hit.trackable as ARPlane);
+        LockSurface(hit, null);
+    }
+
+    private void LockSurface(ARRaycastHit hit, ARPlane fallbackPlane)
+    {
+        ARPlane hitPlane = hit.trackable as ARPlane ?? ResolvePlane(hit.trackableId) ?? fallbackPlane;
+        LockSurface(hit.pose, hitPlane);
     }
 
     public void LockSurface(Pose pose, ARPlane plane)
     {
         ResolveDependencies();
+        plane = plane != null ? plane : ResolveNearestPlane(pose.position);
         lockedPose = pose;
         lockedPlane = plane;
         labelPlacer?.CachePlanePose(pose);
         outlineRenderer?.ShowLockedPose(pose);
+        Debug.Log(lockedPlane != null
+            ? $"[ARSurfaceLockController] Locked surface on ARPlane {lockedPlane.trackableId}."
+            : "[ARSurfaceLockController] Locked surface pose without ARPlane; anchors will use standalone mode.");
         TransitionTo(ARSurfaceLockState.SurfaceLocked);
         SurfaceLocked?.Invoke(pose);
 
@@ -220,6 +230,7 @@ public class ARSurfaceLockController : MonoBehaviour
     private void SetPlaneDetection(bool enabled, bool preserveLockedPlane)
     {
         if (planeManager == null) return;
+        bool shouldPreserveLockedPlane = preserveLockedPlane && lockedPlane != null;
 
         if (enabled)
         {
@@ -230,13 +241,50 @@ public class ARSurfaceLockController : MonoBehaviour
             planeManager.requestedDetectionMode = PlaneDetectionMode.None;
         }
 
-        planeManager.enabled = enabled || preserveLockedPlane;
+        planeManager.enabled = enabled || shouldPreserveLockedPlane;
         foreach (ARPlane plane in planeManager.trackables)
         {
-            bool keepLockedPlane = preserveLockedPlane && lockedPlane != null && plane == lockedPlane;
+            bool keepLockedPlane = shouldPreserveLockedPlane && plane == lockedPlane;
             plane.gameObject.SetActive(enabled || keepLockedPlane);
             SetPlaneVisualsVisible(plane, enabled);
         }
+    }
+
+    private ARPlane ResolvePlane(TrackableId trackableId)
+    {
+        ResolveDependencies();
+        if (planeManager == null) return null;
+
+        foreach (ARPlane plane in planeManager.trackables)
+        {
+            if (plane != null && plane.trackableId == trackableId)
+            {
+                return plane;
+            }
+        }
+
+        return null;
+    }
+
+    private ARPlane ResolveNearestPlane(Vector3 position)
+    {
+        if (planeManager == null) return null;
+
+        ARPlane nearest = null;
+        float nearestDistanceSquared = float.PositiveInfinity;
+        foreach (ARPlane plane in planeManager.trackables)
+        {
+            if (plane == null) continue;
+
+            float distanceSquared = (plane.transform.position - position).sqrMagnitude;
+            if (distanceSquared < nearestDistanceSquared)
+            {
+                nearestDistanceSquared = distanceSquared;
+                nearest = plane;
+            }
+        }
+
+        return nearest;
     }
 
     private static void SetPlaneVisualsVisible(ARPlane plane, bool visible)

@@ -54,13 +54,13 @@ public class StateManager : MonoBehaviour
         if (statusText != null)
         {
             statusText.text = message;
-            statusText.color = lightBackground ? Color.black : Color.white;
+            statusText.color = Color.white;
         }
 
         if (statusBackground == null) return;
 
         Color targetColor = lightBackground
-            ? new Color(1f, 1f, 1f, 0.86f)
+            ? new Color(0f, 0f, 0f, 0.68f)
             : new Color(0f, 0f, 0f, 0.82f);
         if (statusTransition != null) StopCoroutine(statusTransition);
         statusTransition = StartCoroutine(AnimateStatus(targetColor));
@@ -84,8 +84,7 @@ public class StateManager : MonoBehaviour
                 break;
             case AppState.PlaneDetected:
                 message = "Đã phát hiện bảng/slide";
-                targetColor = new Color(1f, 1f, 1f, 0.86f);
-                textColor = Color.black;
+                targetColor = new Color(0f, 0f, 0f, 0.70f);
                 break;
             case AppState.Translating:
                 message = "Đang dịch nội dung...";
@@ -93,8 +92,7 @@ public class StateManager : MonoBehaviour
                 break;
             case AppState.Anchored:
                 message = "Đã ghim bản dịch";
-                targetColor = new Color(1f, 1f, 1f, 0.86f);
-                textColor = Color.black;
+                targetColor = new Color(0f, 0f, 0f, 0.72f);
                 break;
             case AppState.Error:
                 message = "Có lỗi, hãy thử lại";

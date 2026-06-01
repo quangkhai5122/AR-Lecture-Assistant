@@ -83,7 +83,13 @@ public class ARAnchorPlacer : MonoBehaviour
 
         try
         {
-            return anchorManager.AttachAnchor(plane, pose);
+            ARAnchor anchor = anchorManager.AttachAnchor(plane, pose);
+            if (anchor != null)
+            {
+                anchor.gameObject.name = "TranslationPlaneAnchor";
+                Debug.Log($"[ARAnchorPlacer] Attached anchor to ARPlane {plane.trackableId}.");
+            }
+            return anchor;
         }
         catch (System.Exception ex)
         {
@@ -94,11 +100,31 @@ public class ARAnchorPlacer : MonoBehaviour
 
     private ARAnchor CreateStandaloneAnchor(Pose pose)
     {
-        // Tạo GameObject rồi thêm ARAnchor component
-        GameObject anchorGO = new GameObject("TranslationAnchor");
-        anchorGO.transform.SetPositionAndRotation(pose.position, pose.rotation);
+        if (anchorManager == null)
+        {
+            Debug.LogWarning("[ARAnchorPlacer] ARAnchorManager not found; cannot create a real AR anchor.");
+            return null;
+        }
 
-        ARAnchor anchor = anchorGO.AddComponent<ARAnchor>();
-        return anchor;
+        try
+        {
+#pragma warning disable CS0618
+            ARAnchor anchor = anchorManager.AddAnchor(pose);
+#pragma warning restore CS0618
+            if (anchor == null)
+            {
+                Debug.LogWarning("[ARAnchorPlacer] ARAnchorManager rejected standalone anchor.");
+                return null;
+            }
+
+            anchor.gameObject.name = "TranslationStandaloneAnchor";
+            Debug.Log("[ARAnchorPlacer] Created standalone AR anchor.");
+            return anchor;
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[ARAnchorPlacer] Could not create standalone AR anchor. {ex.Message}");
+            return null;
+        }
     }
 }

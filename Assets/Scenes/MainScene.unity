@@ -3358,8 +3358,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 677486d280c942278675a76c9c135ac7, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  outlineColor: {r: 1, g: 1, b: 1, a: 0.82}
-  lineWidthMeters: 0.008
+  outlineColor: {r: 1, g: 1, b: 1, a: 0.28}
+  lineWidthMeters: 0.0045
   visibleByDefault: 0
 --- !u!114 &1716747714
 MonoBehaviour:
