@@ -12,7 +12,7 @@ using UnityEngine.Networking;
 public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 {
     [Header("Backend")]
-    public string backendBaseUrl = "http://192.168.1.10:5000";
+    public string backendBaseUrl = "http://192.168.1.6:5000";
     public string endpointUrl = "http://127.0.0.1:5000/pipeline/frame";
     public string pipelineFramePath = "/pipeline/frame";
     public string pipelineAliasPath = "/pipeline";
