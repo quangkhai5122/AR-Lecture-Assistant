@@ -59,7 +59,7 @@ python app.py
 Health check:
 
 ```powershell
-Invoke-WebRequest http://127.0.0.1:5000/health | Select-Object -ExpandProperty Content
+Invoke-WebRequest http://127.0.0.1:5050/health | Select-Object -ExpandProperty Content
 ```
 
 ## Gửi sample frame

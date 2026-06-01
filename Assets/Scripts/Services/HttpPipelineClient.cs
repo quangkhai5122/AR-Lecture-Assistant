@@ -7,13 +7,13 @@ using UnityEngine.Networking;
 
 /// <summary>
 /// HTTP client cho toàn bộ backend Flask: health, pipeline, OCR-only, translate-only.
-/// Trên điện thoại, backendBaseUrl phải dùng IP LAN của laptop, ví dụ http://192.168.1.20:5000.
+/// Trên điện thoại, backendBaseUrl phải dùng IP LAN của laptop, ví dụ http://192.168.1.20:5050.
 /// </summary>
 public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 {
-    private const string AndroidLanBackendUrl = "http://192.168.1.8:5000";
-    private const string DefaultLoopbackBaseUrl = "http://127.0.0.1:5000";
-    private const string DefaultLoopbackFrameUrl = "http://127.0.0.1:5000/pipeline/frame";
+    private const string AndroidLanBackendUrl = "http://192.168.1.16:5050";
+    private const string DefaultLoopbackBaseUrl = "http://127.0.0.1:5050";
+    private const string DefaultLoopbackFrameUrl = "http://127.0.0.1:5050/pipeline/frame";
 
     [Header("Backend")]
     public string backendBaseUrl = AndroidLanBackendUrl;

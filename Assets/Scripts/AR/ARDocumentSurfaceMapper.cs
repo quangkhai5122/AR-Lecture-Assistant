@@ -112,6 +112,83 @@ public sealed class ARDocumentSurfaceMapper
     public bool TryMapImagePointToPose(Vector2 imagePoint, out Pose pose)
     {
         pose = Pose.identity;
+        if (!TryMapImagePointToWorld(imagePoint, out Vector3 position))
+        {
+            return false;
+        }
+
+        pose = new Pose(position, surface.Rotation);
+        return true;
+    }
+
+    public bool TryMapImageRectToSurfacePose(Rect imageRect, out Pose pose, out Vector2 sizeMeters)
+    {
+        pose = Pose.identity;
+        sizeMeters = Vector2.zero;
+
+        if (imageRect.width <= 0f || imageRect.height <= 0f)
+        {
+            return false;
+        }
+
+        Vector2[] imagePoints =
+        {
+            new Vector2(imageRect.xMin, imageRect.yMin),
+            new Vector2(imageRect.xMax, imageRect.yMin),
+            new Vector2(imageRect.xMax, imageRect.yMax),
+            new Vector2(imageRect.xMin, imageRect.yMax),
+        };
+        Vector3[] worldPoints = new Vector3[4];
+        for (int i = 0; i < imagePoints.Length; i++)
+        {
+            if (!TryMapImagePointToWorld(imagePoints[i], out worldPoints[i]))
+            {
+                return false;
+            }
+        }
+
+        Vector3 center = (worldPoints[0] + worldPoints[1] + worldPoints[2] + worldPoints[3]) * 0.25f;
+        Vector3 right = ((worldPoints[1] - worldPoints[0]) + (worldPoints[2] - worldPoints[3])) * 0.5f;
+        Vector3 down = ((worldPoints[3] - worldPoints[0]) + (worldPoints[2] - worldPoints[1])) * 0.5f;
+        float width = Mathf.Max((worldPoints[1] - worldPoints[0]).magnitude, (worldPoints[2] - worldPoints[3]).magnitude);
+        float height = Mathf.Max((worldPoints[3] - worldPoints[0]).magnitude, (worldPoints[2] - worldPoints[1]).magnitude);
+        if (width <= 0.0001f || height <= 0.0001f)
+        {
+            return false;
+        }
+
+        Vector3 normal = surface.Rotation * Vector3.up;
+        if (normal.sqrMagnitude < 0.000001f)
+        {
+            normal = Vector3.Cross(right, down);
+        }
+        normal.Normalize();
+        Camera camera = Camera.main;
+        if (camera != null && Vector3.Dot(normal, camera.transform.position - center) < 0f)
+        {
+            normal = -normal;
+        }
+
+        down = Vector3.ProjectOnPlane(down, normal);
+        if (down.sqrMagnitude < 0.000001f)
+        {
+            down = Vector3.ProjectOnPlane(surface.Rotation * Vector3.forward, normal);
+        }
+        if (down.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+        down.Normalize();
+
+        Quaternion rotation = Quaternion.LookRotation(-down, normal);
+        pose = new Pose(center, rotation);
+        sizeMeters = new Vector2(width, height);
+        return true;
+    }
+
+    private bool TryMapImagePointToWorld(Vector2 imagePoint, out Vector3 position)
+    {
+        position = Vector3.zero;
         if (!TryImagePointToSurfaceUv(imagePoint, out Vector2 uv))
         {
             return false;
@@ -119,8 +196,7 @@ public sealed class ARDocumentSurfaceMapper
 
         Vector3 top = Vector3.Lerp(surface.WorldCorners[0], surface.WorldCorners[1], uv.x);
         Vector3 bottom = Vector3.Lerp(surface.WorldCorners[3], surface.WorldCorners[2], uv.x);
-        Vector3 position = Vector3.Lerp(top, bottom, uv.y);
-        pose = new Pose(position, surface.Rotation);
+        position = Vector3.Lerp(top, bottom, uv.y);
         return true;
     }
 

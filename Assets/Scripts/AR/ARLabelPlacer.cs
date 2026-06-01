@@ -42,6 +42,13 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private bool fitImageCoordinatesToCameraViewport = true;
     [SerializeField] private bool preserveOcrAnchorPositions = true;
     [SerializeField] private bool faceCameraForReadability = true;
+    [SerializeField] private bool alignOcrLabelsToDetectedText = true;
+    [SerializeField] private bool fitOcrLabelsToPhysicalTextBounds = true;
+    [SerializeField] private float ocrBoundsPaddingRatio = 0.08f;
+    [SerializeField] private float minOcrLabelWidthMeters = 0.08f;
+    [SerializeField] private float minOcrLabelHeightMeters = 0.026f;
+    [SerializeField] private float maxOcrLabelWidthMeters = 1.40f;
+    [SerializeField] private float maxOcrLabelHeightMeters = 0.42f;
     [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
     [SerializeField] private bool useGoogleLensOverlayDefaults = true;
@@ -240,11 +247,25 @@ public class ARLabelPlacer : MonoBehaviour
                 : ResolveNonOverlappingScreenPoint(screenPoint, text);
             bool labelPlaced = false;
 
-            // Path A: SurfaceMapper (homography)
+            // Path A: SurfaceMapper (homography). Prefer the whole OCR bbox, not only
+            // the center point, so the label can fit the detected text bounds.
             Vector2 surfaceImagePoint = preserveOcrAnchorPositions
                 ? group.ImagePoint
                 : ResolveSurfaceMappedImagePoint(group, resolvedScreenPoint, response);
-            if (surfaceMapper != null && surfaceMapper.TryMapImagePointToPose(surfaceImagePoint, out Pose surfacePose))
+            if (surfaceMapper != null &&
+                alignOcrLabelsToDetectedText &&
+                TryBuildSurfaceLabelPlacement(surfaceMapper, group, out SurfaceLabelPlacement placement))
+            {
+                labelPlaced = CreateFixedLabel(text, placement, surfaceMapper.Surface.Plane);
+                if (labelPlaced)
+                {
+                    RegisterPlacedLabel(group.ScreenPoint, text);
+                }
+            }
+
+            if (!labelPlaced &&
+                surfaceMapper != null &&
+                surfaceMapper.TryMapImagePointToPose(surfaceImagePoint, out Pose surfacePose))
             {
                 labelPlaced = CreateFixedLabel(text, surfacePose, group.ScreenSize, surfaceMapper.Surface.Plane);
                 if (labelPlaced)
@@ -411,6 +432,40 @@ public class ARLabelPlacer : MonoBehaviour
             group.ImagePoint.x + Mathf.Clamp(requestedImagePoint.x - group.ImagePoint.x, -maxOffsetX, maxOffsetX),
             group.ImagePoint.y + Mathf.Clamp(requestedImagePoint.y - group.ImagePoint.y, -maxOffsetY, maxOffsetY)
         );
+    }
+
+    private bool TryBuildSurfaceLabelPlacement(
+        ARDocumentSurfaceMapper surfaceMapper,
+        TranslationLabelGroup group,
+        out SurfaceLabelPlacement placement
+    )
+    {
+        placement = null;
+        if (surfaceMapper == null || group == null || group.BBox.width <= 0f || group.BBox.height <= 0f)
+        {
+            return false;
+        }
+
+        if (!surfaceMapper.TryMapImageRectToSurfacePose(group.BBox, out Pose pose, out Vector2 rawSizeMeters))
+        {
+            return false;
+        }
+
+        float paddingMultiplier = 1f + Mathf.Max(0f, ocrBoundsPaddingRatio) * 2f;
+        Vector2 fittedSizeMeters = new Vector2(
+            Mathf.Clamp(rawSizeMeters.x * paddingMultiplier, minOcrLabelWidthMeters, maxOcrLabelWidthMeters),
+            Mathf.Clamp(rawSizeMeters.y * paddingMultiplier, minOcrLabelHeightMeters, maxOcrLabelHeightMeters)
+        );
+
+        placement = new SurfaceLabelPlacement
+        {
+            Pose = pose,
+            ScreenSize = group.ScreenSize,
+            SizeMeters = fittedSizeMeters,
+            AlignToSurface = true,
+            FitToPhysicalBounds = fitOcrLabelsToPhysicalTextBounds
+        };
+        return true;
     }
 
     private List<TranslationLabelGroup> BuildTranslationLabelGroups(PipelineResponse response)
@@ -1450,6 +1505,16 @@ public class ARLabelPlacer : MonoBehaviour
         return CreateFixedLabelOnAnchor(translatedText, hitPose, targetScreenSize, anchor);
     }
 
+    private bool CreateFixedLabel(string translatedText, SurfaceLabelPlacement placement, ARPlane plane)
+    {
+        if (placement == null) return false;
+
+        ARAnchor anchor = anchorPlacer.PlaceAnchor(placement.Pose, plane);
+        if (anchor == null) return false;
+
+        return CreateFixedLabelOnAnchor(translatedText, placement.Pose, placement.ScreenSize, anchor, placement);
+    }
+
     private bool CreateFixedLabelOnAnchor(
         string translatedText,
         Pose hitPose,
@@ -1457,17 +1522,43 @@ public class ARLabelPlacer : MonoBehaviour
         ARAnchor anchor
     )
     {
+        return CreateFixedLabelOnAnchor(translatedText, hitPose, targetScreenSize, anchor, null);
+    }
+
+    private bool CreateFixedLabelOnAnchor(
+        string translatedText,
+        Pose hitPose,
+        Vector2 targetScreenSize,
+        ARAnchor anchor,
+        SurfaceLabelPlacement surfacePlacement
+    )
+    {
         GameObject label = Instantiate(fixedLabelPrefab, anchor.transform);
         label.transform.localPosition = Vector3.up * Mathf.Max(0f, labelSurfaceOffsetMeters);
         label.transform.localRotation = Quaternion.identity;
-        ApplyDistanceScale(label, hitPose.position);
-
-        if (faceCameraForReadability && label.GetComponent<LabelBillboard>() == null)
+        bool alignToSurface = surfacePlacement != null && surfacePlacement.AlignToSurface;
+        LabelBillboard billboard = label.GetComponent<LabelBillboard>();
+        if (alignToSurface)
         {
-            label.AddComponent<LabelBillboard>();
+            if (billboard != null)
+            {
+                Destroy(billboard);
+            }
+            label.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
         }
-        else if (!faceCameraForReadability)
+        else if (faceCameraForReadability)
         {
+            if (billboard == null)
+            {
+                label.AddComponent<LabelBillboard>();
+            }
+        }
+        else
+        {
+            if (billboard != null)
+            {
+                Destroy(billboard);
+            }
             label.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
         }
 
@@ -1480,6 +1571,14 @@ public class ARLabelPlacer : MonoBehaviour
 
         ARLectureVisualPolish.StyleLabel(label);
         FitLabelPanel(label, textComp, targetScreenSize);
+        if (surfacePlacement != null && surfacePlacement.FitToPhysicalBounds)
+        {
+            ApplySurfaceFitScale(label, surfacePlacement.SizeMeters);
+        }
+        else
+        {
+            ApplyDistanceScale(label, hitPose.position);
+        }
         AttachTapToFocus(label, textComp != null ? textComp.text : translatedText);
         ApplyTranslationVisibility(label);
         if (animateWorldSpaceLabels && translationsVisible)
@@ -1658,6 +1757,33 @@ public class ARLabelPlacer : MonoBehaviour
         label.transform.localScale = Vector3.one * scale;
     }
 
+    private void ApplySurfaceFitScale(GameObject label, Vector2 targetSizeMeters)
+    {
+        if (label == null || targetSizeMeters.x <= 0f || targetSizeMeters.y <= 0f)
+        {
+            return;
+        }
+
+        Canvas canvas = label.GetComponentInChildren<Canvas>(true);
+        RectTransform canvasRect = canvas != null ? canvas.GetComponent<RectTransform>() : null;
+        if (canvasRect == null || canvasRect.sizeDelta.x <= 0f || canvasRect.sizeDelta.y <= 0f)
+        {
+            ApplyDistanceScale(label, label.transform.position);
+            return;
+        }
+
+        float canvasScaleX = Mathf.Max(0.000001f, Mathf.Abs(canvasRect.localScale.x));
+        float canvasScaleY = Mathf.Max(0.000001f, Mathf.Abs(canvasRect.localScale.y));
+        float scaleX = targetSizeMeters.x / Mathf.Max(0.000001f, canvasRect.sizeDelta.x * canvasScaleX);
+        float scaleY = targetSizeMeters.y / Mathf.Max(0.000001f, canvasRect.sizeDelta.y * canvasScaleY);
+        scaleX = Mathf.Clamp(scaleX, 0.04f, 4f);
+        scaleY = Mathf.Clamp(scaleY, 0.04f, 4f);
+
+        // The fixed-label canvas is rotated onto the surface: local X is text width,
+        // local Z is text height, and local Y remains the surface-normal offset axis.
+        label.transform.localScale = new Vector3(scaleX, 1f, scaleY);
+    }
+
     private void FitLabelPanel(GameObject label, TextMeshProUGUI textComp, Vector2 targetScreenSize)
     {
         if (label == null || textComp == null) return;
@@ -1750,6 +1876,15 @@ public class ARLabelPlacer : MonoBehaviour
         public Vector2 ScreenPoint;
         public Vector2 ScreenSize;
         public int LineCount;
+    }
+
+    private sealed class SurfaceLabelPlacement
+    {
+        public Pose Pose;
+        public Vector2 ScreenSize;
+        public Vector2 SizeMeters;
+        public bool AlignToSurface;
+        public bool FitToPhysicalBounds;
     }
 
     private sealed class TranslationLabelGroup
