@@ -68,6 +68,8 @@ public class ButtonController : MonoBehaviour
             if (httpPipelineClient == null) httpPipelineClient = gameObject.AddComponent<HttpPipelineClient>();
         }
 
+        EnsureHideTranslationsButton();
+
         if (scanButton != null) scanButton.onClick.AddListener(OnScanPressed);
         if (translateButton != null) translateButton.onClick.AddListener(OnTranslatePressed);
         if (clearButton != null) clearButton.onClick.AddListener(OnClearPressed);
@@ -508,14 +510,11 @@ public class ButtonController : MonoBehaviour
     private void ApplySimpleTwoButtonMode()
     {
         SetButtonObjectActive(translateButton, false);
-        SetButtonObjectActive(hideTranslationsButton, false);
         SetButtonObjectActive(freezeButton, false);
 
         SetNamedObjectActive("TranslateButton", false);
-        SetNamedObjectActive("HideTranslationsButton", false);
         SetNamedObjectActive("FreezeButton", false);
         SetNamedObjectActive("ToggleDebugButton", false);
-        SetNamedObjectActive("TranscriptToggleButton", false);
     }
 
     private void SetPlaneTrackingEnabled(bool enabled)
@@ -584,14 +583,21 @@ public class ButtonController : MonoBehaviour
     {
         if (hideTranslationsButton == null)
         {
-            GameObject existingButton = GameObject.Find("HideTranslationsButton");
-            if (existingButton != null)
+            foreach (Button button in FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
-                hideTranslationsButton = existingButton.GetComponent<Button>();
+                if (button.name != "HideTranslationsButton") continue;
+
+                hideTranslationsButton = button;
+                hideTranslationsButton.gameObject.SetActive(true);
+                break;
             }
         }
 
-        if (hideTranslationsButton != null) return;
+        if (hideTranslationsButton != null)
+        {
+            ConfigureHideTranslationsButtonLayout(hideTranslationsButton.GetComponent<RectTransform>(), false);
+            return;
+        }
 
         Button template = clearButton != null ? clearButton : translateButton;
         Transform parent = ResolveHideTranslationsParent(out bool attachToTopBar);
@@ -599,6 +605,7 @@ public class ButtonController : MonoBehaviour
 
         GameObject buttonObject = Instantiate(template.gameObject, parent, false);
         buttonObject.name = "HideTranslationsButton";
+        buttonObject.SetActive(true);
         hideTranslationsButton = buttonObject.GetComponent<Button>();
 
         ConfigureHideTranslationsButtonLayout(buttonObject.GetComponent<RectTransform>(), attachToTopBar);

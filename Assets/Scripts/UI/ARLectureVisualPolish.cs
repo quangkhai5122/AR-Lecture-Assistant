@@ -340,10 +340,8 @@ public class ARLectureVisualPolish : MonoBehaviour
     private void ApplyNavigationMode()
     {
         SetObjectActive("TranslateButton", false);
-        SetObjectActive("HideTranslationsButton", false);
         SetObjectActive("FreezeButton", false);
         SetObjectActive("ToggleDebugButton", false);
-        SetObjectActive("TranscriptToggleButton", false);
     }
 
     private static void EnsureAccentBar(Transform parent)
@@ -368,6 +366,8 @@ public class ARLectureVisualPolish : MonoBehaviour
     private static Color ResolveButtonColor(string objectName)
     {
         string lowerName = objectName.ToLowerInvariant();
+        if (lowerName.Contains("transcript")) return new Color(0.06f, 0.32f, 0.62f, 0.96f);
+        if (lowerName.Contains("hidetranslations")) return new Color(0.18f, 0.24f, 0.31f, 0.96f);
         if (lowerName.Contains("scan")) return PrimaryColor;
         if (lowerName.Contains("translate")) return TranslateColor;
         if (lowerName.Contains("clear")) return ClearColor;
@@ -377,6 +377,10 @@ public class ARLectureVisualPolish : MonoBehaviour
     private static string ResolveButtonLabel(string objectName, string currentText)
     {
         string lowerName = objectName.ToLowerInvariant();
+        if (lowerName.Contains("hidetranslations"))
+        {
+            return string.IsNullOrWhiteSpace(currentText) ? "Hide VN" : currentText.Trim();
+        }
         if (lowerName.Contains("scan")) return "Quét";
         if (lowerName.Contains("translate")) return "Dịch";
         if (lowerName.Contains("clear")) return "Xóa";

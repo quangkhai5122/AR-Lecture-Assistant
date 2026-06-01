@@ -36,7 +36,7 @@ public class SpeechTranscriptController : MonoBehaviour
     [SerializeField] private float maxUtteranceSeconds = 18f;
 
     [Header("Speech Recognition")]
-    [SerializeField] private bool showTranscriptUi = false;
+    [SerializeField] private bool showTranscriptUi = true;
     [SerializeField] private bool autoStartListening = false;
     [SerializeField] private string recognitionLanguage = "en-US";
     [SerializeField] private float rollingWindowSeconds = 45f;
@@ -102,7 +102,7 @@ public class SpeechTranscriptController : MonoBehaviour
     {
         ApplyLowLatencySpeechDefaults();
         notesService = new LectureNotesService(notesFileName);
-        if (showTranscriptUi)
+        if (showTranscriptUi && toggleButton == null)
         {
             BuildUi();
         }
@@ -115,6 +115,19 @@ public class SpeechTranscriptController : MonoBehaviour
         {
             SetStatus("Transcript paused");
         }
+    }
+
+    public void EnsureTranscriptUiVisible()
+    {
+        showTranscriptUi = true;
+
+        if (toggleButton != null)
+        {
+            toggleButton.gameObject.SetActive(true);
+            return;
+        }
+
+        BuildUi();
     }
 
     private void Update()
@@ -912,6 +925,8 @@ public class SpeechTranscriptController : MonoBehaviour
 
     private void BuildUi()
     {
+        if (toggleButton != null) return;
+
         Canvas canvas = FindAnyObjectByType<Canvas>();
         if (canvas == null)
         {
@@ -1087,7 +1102,7 @@ public class SpeechTranscriptController : MonoBehaviour
         rect.sizeDelta = new Vector2(180f, 58f);
 
         bool isCloseButton = name.ToLowerInvariant().Contains("close");
-        Color buttonColor = isCloseButton ? Color.white : Color.black;
+        Color buttonColor = isCloseButton ? Color.white : color;
         Color textColor = isCloseButton ? Color.black : Color.white;
 
         Image image = buttonObject.AddComponent<Image>();

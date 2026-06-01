@@ -72,6 +72,8 @@ public class UIManager : MonoBehaviour
         {
             speechTranscriptController = gameObject.AddComponent<SpeechTranscriptController>();
         }
+
+        speechTranscriptController.EnsureTranscriptUiVisible();
     }
 
     private void OnDestroy()
