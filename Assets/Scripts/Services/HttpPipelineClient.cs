@@ -12,7 +12,7 @@ using UnityEngine.Networking;
 public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 {
     [Header("Backend")]
-    public string backendBaseUrl = "http://192.168.1.6:5000";
+    public string backendBaseUrl = "http://127.0.0.1:5000";
     public string endpointUrl = "http://127.0.0.1:5000/pipeline/frame";
     public string pipelineFramePath = "/pipeline/frame";
     public string pipelineAliasPath = "/pipeline";
@@ -519,11 +519,7 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 
     private void ThrowIfRequestFailed(UnityWebRequest request)
     {
-#if UNITY_2020_2_OR_NEWER
         bool hasError = request.result != UnityWebRequest.Result.Success;
-#else
-        bool hasError = request.isNetworkError || request.isHttpError;
-#endif
         if (hasError)
         {
             throw new Exception($"Backend request failed: {request.error}\n{request.downloadHandler.text}");

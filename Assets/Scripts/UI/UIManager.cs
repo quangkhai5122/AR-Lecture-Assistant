@@ -20,7 +20,7 @@ public class UIManager : MonoBehaviour
     [SerializeField] private ButtonController buttonController;
     [SerializeField] private DebugPanelController debugPanel;
     [SerializeField] private SpeechTranscriptController speechTranscriptController;
-    [SerializeField] private bool showTranscriptControl = false;
+    [SerializeField] private bool showTranscriptControl = true;
 
     [Header("=== Services ===")]
     [SerializeField] private MockOCRService ocrService;
@@ -50,7 +50,7 @@ public class UIManager : MonoBehaviour
         stateManager.SetState(AppState.Idle);
 
         // Tắt plane detection ban đầu (chờ nhấn Scan)
-        SetPlaneDetection(false);
+        ClearSurfaceLock();
 
         // Lắng nghe khi plane được detect
         if (arPlaneManager != null)
@@ -130,6 +130,43 @@ public class UIManager : MonoBehaviour
     private void OnSurfaceTrackingStateChanged(ARSurfaceLockState trackingState)
     {
         debugPanel?.UpdateTrackingState(trackingState.ToString());
+
+        if (stateManager == null) return;
+
+        switch (trackingState)
+        {
+            case ARSurfaceLockState.SearchingPlane:
+                stateManager.SetStatusMessage("Đang tìm mặt bảng/slide...");
+                break;
+            case ARSurfaceLockState.PlaneFound:
+                stateManager.SetStatusMessage("Đã thấy mặt bảng/slide", true);
+                break;
+            case ARSurfaceLockState.SurfaceLocked:
+                if (stateManager.CurrentState == AppState.Scanning)
+                {
+                    stateManager.SetState(AppState.PlaneDetected);
+                }
+                else
+                {
+                    stateManager.SetStatusMessage("Đã ghim mặt bảng/slide", true);
+                }
+                break;
+            case ARSurfaceLockState.TrackingLimited:
+                stateManager.SetStatusMessage("Di chuyển camera chậm lại để bắt mặt bảng");
+                break;
+            case ARSurfaceLockState.Lost:
+                if (surfaceLockController != null && !surfaceLockController.HasLockedSurface)
+                {
+                    return;
+                }
+
+                if (stateManager.CurrentState != AppState.Idle &&
+                    stateManager.CurrentState != AppState.Error)
+                {
+                    stateManager.SetError("Mất bám mặt bảng. Bấm Thử lại để quét lại.");
+                }
+                break;
+        }
     }
 
     /// <summary>
@@ -137,6 +174,18 @@ public class UIManager : MonoBehaviour
     /// </summary>
     public void SetPlaneDetection(bool enabled)
     {
+        if (enabled)
+        {
+            BeginSurfaceSearch();
+            return;
+        }
+
+        if (surfaceLockController != null)
+        {
+            ClearSurfaceLock();
+            return;
+        }
+
         if (arPlaneManager != null)
         {
             arPlaneManager.enabled = enabled;
@@ -146,6 +195,44 @@ public class UIManager : MonoBehaviour
             {
                 plane.gameObject.SetActive(enabled);
             }
+        }
+    }
+
+    /// <summary>
+    /// Routes scan/reset operations through the surface lock controller.
+    /// </summary>
+    private void BeginSurfaceSearch()
+    {
+        EnsureSurfaceLockController();
+
+        if (surfaceLockController != null)
+        {
+            surfaceLockController.BeginSearch();
+            return;
+        }
+
+        SetPlaneDetectionFallback(true);
+    }
+
+    private void ClearSurfaceLock()
+    {
+        if (surfaceLockController != null)
+        {
+            surfaceLockController.ClearLock();
+            return;
+        }
+
+        SetPlaneDetectionFallback(false);
+    }
+
+    private void SetPlaneDetectionFallback(bool enabled)
+    {
+        if (arPlaneManager == null) return;
+
+        arPlaneManager.enabled = enabled;
+        foreach (var plane in arPlaneManager.trackables)
+        {
+            plane.gameObject.SetActive(enabled);
         }
     }
 
@@ -191,12 +278,12 @@ public class UIManager : MonoBehaviour
         switch (newState)
         {
             case AppState.Idle:
-                SetPlaneDetection(false);
+                ClearSurfaceLock();
                 if (crosshair != null) crosshair.SetActive(false);
                 break;
 
             case AppState.Scanning:
-                SetPlaneDetection(true);
+                BeginSurfaceSearch();
                 if (crosshair != null) crosshair.SetActive(true);
                 break;
 
@@ -213,7 +300,13 @@ public class UIManager : MonoBehaviour
                 break;
 
             case AppState.Error:
-                SetPlaneDetection(false);
+                if (crosshair != null)
+                {
+                    crosshair.SetActive(
+                        surfaceLockController != null &&
+                        surfaceLockController.CurrentState == ARSurfaceLockState.SurfaceLocked
+                    );
+                }
                 break;
         }
 
@@ -226,7 +319,7 @@ public class UIManager : MonoBehaviour
     public void OnScanRequested()
     {
         stateManager.SetState(AppState.Scanning);
-        SetPlaneDetection(true);
+        BeginSurfaceSearch();
     }
 
     /// <summary>
@@ -280,6 +373,7 @@ public class UIManager : MonoBehaviour
         labelPlacer.ClearAll();
         ocrService.Reset();
         debugPanel?.ClearAll();
+        ClearSurfaceLock();
         stateManager.SetState(AppState.Idle);
     }
 
@@ -288,7 +382,29 @@ public class UIManager : MonoBehaviour
     /// </summary>
     public void OnFreezeRequested(bool freeze)
     {
-        SetPlaneDetection(!freeze);
+        if (freeze)
+        {
+            if (surfaceLockController != null)
+            {
+                surfaceLockController.PausePlaneDetection();
+            }
+            else
+            {
+                SetPlaneDetectionFallback(false);
+            }
+        }
+        else
+        {
+            if (surfaceLockController != null)
+            {
+                surfaceLockController.ResumePlaneDetection();
+            }
+            else
+            {
+                BeginSurfaceSearch();
+            }
+        }
+
         Debug.Log($"[UIManager] Freeze: {freeze}");
     }
 }

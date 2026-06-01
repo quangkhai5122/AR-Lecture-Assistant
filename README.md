@@ -13,13 +13,15 @@ AR Lecture Assistant là một project Unity + Flask để dịch nội dung sli
 ## Tính năng đang có
 
 - Quét slide/bảng và đặt translation overlay lên nội dung OCR.
-- Demo mode mặc định giữ UI tối giản với luồng `Quét` / `Dịch` / `Dịch lại` / `Thử lại` và `Xóa`.
+- Mặc định khi mở app sẽ hiện đủ 5 nút chính: `Hide VN` / `Show VN`, `Transcript`, `Quét`, `Dịch` / `Dịch lại` / `Thử lại`, và `Xóa`.
 - Ưu tiên capture từ AR camera raw để tránh đưa UI overlay vào ảnh OCR, fallback sang screenshot khi thiết bị không hỗ trợ CPU image.
 - Backend trả thêm `document_surface` để Unity map bbox OCR về bề mặt AR và vẽ outline surface.
+- Spatial mapper projects detected document corners to the locked AR plane, keeps label nudges bounded near OCR boxes, and attaches anchors to the common ARPlane when available.
 - Giữ nguyên công thức toán khi dịch.
 - Gộp block OCR theo dòng để overlay dễ đọc hơn.
 - Subtitle cho dòng dịch chính.
-- Nút `Hide VN` / `Show VN` để ẩn hoặc hiện toàn bộ bản dịch trên slide có thể bật lại bằng serialized flag cho chế độ nâng cao.
+- Tùy chọn tap-to-focus một label dịch để đọc ở panel lớn hơn, vẫn tắt mặc định để tránh mở thêm panel khi chưa cần.
+- Nút `Hide VN` / `Show VN` để ẩn hoặc hiện toàn bộ bản dịch trên slide được bật trong full-feature mode.
 - Speech transcript với các chế độ:
   - mock transcript trong Editor;
   - Google Speech-to-Text qua REST hoặc SDK;
@@ -29,13 +31,15 @@ AR Lecture Assistant là một project Unity + Flask để dịch nội dung sli
   - hỏi đáp trên một đoạn text đã chọn.
 - Chế độ mock và real provider cho backend.
 
-## Baseline demo mode
+## UI modes
 
 - Scene chính: [`Assets/Scenes/MainScene.unity`](Assets/Scenes/MainScene.unity).
-- UI mặc định cho demo chỉ nên hiện hai control: nút chính (`Quét` / `Dịch` / `Dịch lại` / `Thử lại`) và `Xóa`.
-- Debug panel, freeze, transcript, provider controls và `Hide VN` được giữ như tính năng tùy chọn, nhưng ẩn trong demo mode mặc định.
+- UI mặc định hiện đúng 5 nút trên màn hình: `Hide VN`, `Transcript`, `Quét`, `Dịch`, `Xóa`.
+- `Freeze` và debug toggle vẫn còn trong code nhưng bị ẩn mặc định qua `showAdvancedControls = false`.
+- Compact two-button demo vẫn được giữ trong code: bật `useCompactDemoControls` trên `ButtonController` / `ARLectureVisualPolish`, tắt `showTranscriptControl`, `showTranslationVisibilityButton`, và `showAdvancedControls` nếu cần quay lại chế độ trình diễn tối giản.
 - AR flow mặc định: quét plane, lock surface, vẽ outline, capture frame, OCR/dịch qua backend, đặt label trong world space.
-- Checklist kiểm thử nằm ở [`docs/TESTING_CHECKLIST.md`](docs/TESTING_CHECKLIST.md), kịch bản demo nằm ở [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
+- `MainScene` gắn sẵn `FrameCaptureService`, `HttpPipelineClient`, `ARSurfaceLockController`, và `ARSurfaceOutlineRenderer` để có thể cấu hình backend URL / capture path trong Inspector trước khi build Android.
+- Checklist kiểm thử nằm ở [`docs/TESTING_CHECKLIST.md`](docs/TESTING_CHECKLIST.md), kịch bản demo nằm ở [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md), và audit Definition of Done nằm ở [`docs/AR_UPGRADE_ACCEPTANCE_AUDIT.md`](docs/AR_UPGRADE_ACCEPTANCE_AUDIT.md).
 
 ## Cấu trúc thư mục
 
@@ -108,11 +112,27 @@ python scripts\post_sample_frame.py --image samples\slides\slide_01.png --mock
 3. Mở scene [`Assets/Scenes/MainScene.unity`](Assets/Scenes/MainScene.unity).
 4. Nhấn Play để kiểm tra UI / backend flow trong Editor.
 
+### 6. Build APK bằng batchmode
+
+Repo có build method `AndroidBuild.BuildApk` cho CI/local smoke build:
+
+```powershell
+& 'C:\Program Files\Unity\Hub\Editor\2022.3.62f3\Editor\Unity.exe' `
+  -batchmode -quit `
+  -projectPath "$PWD" `
+  -buildTarget Android `
+  -executeMethod AndroidBuild.BuildApk `
+  -outputPath 'Builds\Android\ARLectureAssistant.apk' `
+  -logFile 'unity-android-build.log'
+```
+
+Thư mục `Builds/` được ignore. Nếu build không vào Gradle và log báo `LicensingClient` IPC timeout, mở Unity Hub/Editor thủ công để refresh license rồi chạy lại lệnh.
+
 ## Cấu hình backend URL cho Unity
 
 `HttpPipelineClient` hiện có default:
 
-- `backendBaseUrl = http://192.168.1.10:5000`
+- `backendBaseUrl = http://127.0.0.1:5000`
 - `endpointUrl = http://127.0.0.1:5000/pipeline/frame`
 
 Nhưng ở runtime, luồng chính ưu tiên `backendBaseUrl`. Vì vậy:
@@ -122,10 +142,12 @@ Nhưng ở runtime, luồng chính ưu tiên `backendBaseUrl`. Vì vậy:
 
 Có hai cách cấu hình:
 
-1. Sửa default trực tiếp trong [`Assets/Scripts/Services/HttpPipelineClient.cs`](Assets/Scripts/Services/HttpPipelineClient.cs)
-2. Hoặc thêm `HttpPipelineClient` vào scene trước, rồi chỉnh giá trị trong Inspector
+1. Chỉnh `HttpPipelineClient` đã gắn trên `UICanvas` trong [`Assets/Scenes/MainScene.unity`](Assets/Scenes/MainScene.unity), rồi sửa `backendBaseUrl` trong Inspector.
+2. Hoặc sửa default trực tiếp trong [`Assets/Scripts/Services/HttpPipelineClient.cs`](Assets/Scripts/Services/HttpPipelineClient.cs).
 
-Lưu ý: `ButtonController` và `SpeechTranscriptController` có thể tự `AddComponent<HttpPipelineClient>()` nếu scene chưa có component này, nên nếu không cấu hình sẵn thì app sẽ dùng default hard-coded ở file script.
+Lưu ý: `ButtonController` và `SpeechTranscriptController` vẫn có fallback tự `AddComponent<HttpPipelineClient>()` nếu component bị gỡ khỏi scene, nhưng demo scene hiện đã gắn sẵn component để tránh cấu hình backend URL bị ẩn.
+
+Trong full-feature mode mặc định, `ButtonController` vẫn bật backend mock pipeline để có đường demo ổn định không cần API key. Khi muốn chạy OCR/dịch thật, tắt `backendMockMode` trong Inspector và cấu hình `OCR_PROVIDER` / `TRANSLATION_PROVIDER` ở backend.
 
 ## Cài đặt backend chi tiết
 
@@ -278,5 +300,5 @@ Schema tham chiếu nằm trong [`contracts/`](contracts/).
 
 ## Ghi chú
 
-- Thư mục `docs/` không còn tồn tại trong repo hiện tại; README này là tài liệu cài đặt chính.
+- Thư mục `docs/` chứa checklist kiểm thử, kịch bản demo và trạng thái triển khai theo `AR_UPGRADE_MASTER_PLAN.md`.
 - Nếu chỉ muốn lấy bộ script cũ để nhúng vào một project khác, xem [`client-unity/README_UNITY.md`](client-unity/README_UNITY.md), nhưng source chạy chính vẫn là thư mục `Assets/` ở root repo.

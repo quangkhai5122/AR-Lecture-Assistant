@@ -49,6 +49,23 @@ public class StateManager : MonoBehaviour
         OnStateChanged?.Invoke(AppState.Error);
     }
 
+    public void SetStatusMessage(string message, bool lightBackground = false)
+    {
+        if (statusText != null)
+        {
+            statusText.text = message;
+            statusText.color = lightBackground ? Color.black : Color.white;
+        }
+
+        if (statusBackground == null) return;
+
+        Color targetColor = lightBackground
+            ? new Color(1f, 1f, 1f, 0.86f)
+            : new Color(0f, 0f, 0f, 0.82f);
+        if (statusTransition != null) StopCoroutine(statusTransition);
+        statusTransition = StartCoroutine(AnimateStatus(targetColor));
+    }
+
     private void UpdateStatusUI()
     {
         string message = "Sẵn sàng";

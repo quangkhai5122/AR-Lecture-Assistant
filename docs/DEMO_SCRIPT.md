@@ -4,13 +4,13 @@
 
 - Android ARCore device in landscape orientation.
 - Backend running on the demo laptop and reachable from the phone over LAN.
-- Unity build configured with mock mode available as fallback.
+- Unity build configured with backend mock mode enabled for deterministic demo, with real OCR mode available when the environment is ready.
 - Slide or board visible with high contrast text.
 
 ## Two-Minute Flow
 
 1. Open the app and point the camera at the lecture slide.
-2. Say: "The app starts with a clean AR camera view and only the controls needed for the demo."
+2. Say: "The app starts with the five core controls visible: Hide VN, Transcript, Scan, Translate, and Clear."
 3. Tap `Quét`.
 4. Say: "ARCore detects the physical lecture surface and locks the app to the board or projected slide."
 5. Point out the subtle surface outline.
@@ -23,12 +23,13 @@
 
 ## Fallback Path
 
-- If real OCR or network latency is unstable, enable backend mock mode.
+- If real OCR or network latency is unstable, keep backend mock mode enabled.
 - Use the same flow and explain that mock mode keeps the demo deterministic while preserving the AR surface lock and world-space placement behavior.
 
 ## Talking Points
 
 - Surface lock: the app understands a real board/slide instead of drawing generic UI.
 - World-space labels: translations are anchored to AR positions.
+- BBox-aware placement: labels map from OCR boxes back onto the detected document surface instead of floating as generic screen UI.
 - Stable anchors: moving the device keeps labels attached to the surface.
 - Backend pipeline: OCR, formula-safe translation, document surface estimation, and latency reporting all run through the Flask backend.

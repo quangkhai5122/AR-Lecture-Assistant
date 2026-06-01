@@ -5,8 +5,9 @@ using UnityEngine.UI;
 [DisallowMultipleComponent]
 public class ARLectureVisualPolish : MonoBehaviour
 {
+    [SerializeField] private bool useCompactDemoControls = false;
     [SerializeField] private bool showAdvancedControls = false;
-    [SerializeField] private bool showOptionalDemoControls = false;
+    [SerializeField] private bool showOptionalDemoControls = true;
 
     private static readonly Color DockColor = new Color(0f, 0f, 0f, 0.70f);
     private static readonly Color PanelColor = new Color(0.02f, 0.02f, 0.02f, 0.84f);
@@ -340,14 +341,11 @@ public class ARLectureVisualPolish : MonoBehaviour
 
     private void ApplyNavigationMode()
     {
-        SetObjectActive("TranslateButton", false);
-        if (!showOptionalDemoControls)
-        {
-            SetObjectActive("HideTranslationsButton", false);
-            SetObjectActive("TranscriptToggleButton", false);
-        }
-        SetObjectActive("FreezeButton", false);
-        SetObjectActive("ToggleDebugButton", false);
+        SetObjectActive("TranslateButton", !useCompactDemoControls);
+        SetObjectActive("HideTranslationsButton", showOptionalDemoControls);
+        SetObjectActive("TranscriptToggleButton", showOptionalDemoControls);
+        SetObjectActive("FreezeButton", showAdvancedControls);
+        SetObjectActive("ToggleDebugButton", showAdvancedControls);
     }
 
     private static void EnsureAccentBar(Transform parent)

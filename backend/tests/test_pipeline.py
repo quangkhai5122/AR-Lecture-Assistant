@@ -367,6 +367,27 @@ def test_document_surface_crop_uses_quadrilateral_warp_mapping():
     assert mapped[0]["bbox"][3] > mapped[0]["bbox"][1]
 
 
+def test_document_surface_crop_maps_points_with_perspective_transform():
+    service = DocumentSurfaceService()
+    image = Image.new("RGB", (320, 220), color=(35, 35, 35))
+    surface = {
+        "corners": [40, 20, 250, 40, 280, 180, 30, 170],
+        "confidence": 0.9,
+        "method": "contour_quadrilateral",
+        "source": "test",
+    }
+    crop = service.crop_surface(image, surface)
+
+    assert crop is not None
+    assert crop.perspective_coefficients is not None
+
+    top_left = service._map_crop_point_to_source(crop, 0, 0)
+    bottom_right = service._map_crop_point_to_source(crop, crop.image.width, crop.image.height)
+
+    assert top_left == pytest.approx((40, 20), abs=0.01)
+    assert bottom_right == pytest.approx((280, 180), abs=0.01)
+
+
 def test_document_surface_detects_four_of_five_sample_slides():
     service = DocumentSurfaceService()
     sample_dir = Path(__file__).resolve().parents[2] / "samples" / "slides"

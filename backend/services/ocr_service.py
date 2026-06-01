@@ -587,6 +587,12 @@ class OCRService:
             threshold = int(self._safe_float(os.getenv("OCR_UNSHARP_THRESHOLD"), default=2))
             prepared = prepared.filter(ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=threshold))
 
+        if os.getenv("OCR_THRESHOLD_ENABLED", "0") == "1":
+            threshold_value = int(max(0, min(255, self._safe_float(os.getenv("OCR_THRESHOLD_VALUE"), default=180))))
+            prepared = ImageOps.grayscale(prepared).point(
+                lambda pixel: 255 if pixel >= threshold_value else 0
+            ).convert("RGB")
+
         prepared_width, prepared_height = prepared.size
         return prepared, prepared_width / float(width), prepared_height / float(height)
 

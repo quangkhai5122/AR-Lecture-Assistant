@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
+using UnityEngine.XR.ARSubsystems;
 
 public enum ARSurfaceLockState
 {
@@ -19,17 +20,21 @@ public class ARSurfaceLockController : MonoBehaviour
     [SerializeField] private ARLabelPlacer labelPlacer;
     [SerializeField] private ARSurfaceOutlineRenderer outlineRenderer;
     [SerializeField] private bool disablePlaneDetectionAfterLock = true;
+    [SerializeField] private PlaneDetectionMode requestedDetectionMode =
+        PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
 
     public event Action<ARSurfaceLockState> TrackingStateChanged;
     public event Action<Pose> SurfaceLocked;
 
     private ARSurfaceLockState currentState = ARSurfaceLockState.Lost;
     private Pose? lockedPose;
+    private ARPlane lockedPlane;
     private float searchStartedAt = -1f;
 
     public ARSurfaceLockState CurrentState => currentState;
     public bool HasLockedSurface => lockedPose.HasValue;
     public Pose LockedPose => lockedPose ?? Pose.identity;
+    public ARPlane LockedPlane => lockedPlane;
 
     private void Awake()
     {
@@ -37,18 +42,34 @@ public class ARSurfaceLockController : MonoBehaviour
         outlineRenderer?.Hide();
     }
 
+    private void OnEnable()
+    {
+        ARSession.stateChanged += OnSessionStateChanged;
+    }
+
+    private void OnDisable()
+    {
+        ARSession.stateChanged -= OnSessionStateChanged;
+    }
+
     private void Update()
     {
-        if (currentState != ARSurfaceLockState.SearchingPlane) return;
-
-        if (raycastController != null && raycastController.TryRaycastFromCenter(out Pose hitPose))
+        if (currentState != ARSurfaceLockState.SearchingPlane &&
+            currentState != ARSurfaceLockState.TrackingLimited)
         {
-            TransitionTo(ARSurfaceLockState.PlaneFound);
-            LockSurface(hitPose);
             return;
         }
 
-        if (searchStartedAt > 0f && Time.time - searchStartedAt > 4f)
+        if (raycastController != null && raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit))
+        {
+            TransitionTo(ARSurfaceLockState.PlaneFound);
+            LockSurface(hit);
+            return;
+        }
+
+        if (currentState == ARSurfaceLockState.SearchingPlane &&
+            searchStartedAt > 0f &&
+            Time.time - searchStartedAt > 4f)
         {
             TransitionTo(ARSurfaceLockState.TrackingLimited);
         }
@@ -58,9 +79,10 @@ public class ARSurfaceLockController : MonoBehaviour
     {
         ResolveDependencies();
         lockedPose = null;
+        lockedPlane = null;
         searchStartedAt = Time.time;
         outlineRenderer?.Hide();
-        SetPlaneDetection(true);
+        SetPlaneDetection(true, false);
         TransitionTo(ARSurfaceLockState.SearchingPlane);
     }
 
@@ -68,24 +90,35 @@ public class ARSurfaceLockController : MonoBehaviour
     {
         ResolveDependencies();
 
-        if (raycastController != null && raycastController.TryRaycastFromCenter(out Pose hitPose))
+        if (raycastController != null && raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit))
         {
             TransitionTo(ARSurfaceLockState.PlaneFound);
-            LockSurface(hitPose);
+            LockSurface(hit);
             return;
         }
 
         if (plane != null)
         {
             TransitionTo(ARSurfaceLockState.PlaneFound);
-            LockSurface(new Pose(plane.transform.position, plane.transform.rotation));
+            LockSurface(new Pose(plane.transform.position, plane.transform.rotation), plane);
         }
     }
 
     public void LockSurface(Pose pose)
     {
+        LockSurface(pose, null);
+    }
+
+    public void LockSurface(ARRaycastHit hit)
+    {
+        LockSurface(hit.pose, hit.trackable as ARPlane);
+    }
+
+    public void LockSurface(Pose pose, ARPlane plane)
+    {
         ResolveDependencies();
         lockedPose = pose;
+        lockedPlane = plane;
         labelPlacer?.CachePlanePose(pose);
         outlineRenderer?.ShowLockedPose(pose);
         TransitionTo(ARSurfaceLockState.SurfaceLocked);
@@ -93,23 +126,80 @@ public class ARSurfaceLockController : MonoBehaviour
 
         if (disablePlaneDetectionAfterLock)
         {
-            SetPlaneDetection(false);
+            SetPlaneDetection(false, true);
         }
     }
 
     public void ClearLock()
     {
         lockedPose = null;
+        lockedPlane = null;
         searchStartedAt = -1f;
         outlineRenderer?.Hide();
-        SetPlaneDetection(false);
+        SetPlaneDetection(false, false);
         TransitionTo(ARSurfaceLockState.Lost);
+    }
+
+    public void PausePlaneDetection()
+    {
+        ResolveDependencies();
+        searchStartedAt = -1f;
+        SetPlaneDetection(false, lockedPlane != null);
+    }
+
+    public void ResumePlaneDetection()
+    {
+        ResolveDependencies();
+
+        if (lockedPose.HasValue)
+        {
+            if (disablePlaneDetectionAfterLock)
+            {
+                SetPlaneDetection(false, lockedPlane != null);
+            }
+            else
+            {
+                SetPlaneDetection(true, lockedPlane != null);
+            }
+
+            TransitionTo(ARSurfaceLockState.SurfaceLocked);
+            return;
+        }
+
+        BeginSearch();
     }
 
     public void ShowDocumentSurface(Vector3[] worldCorners)
     {
         ResolveDependencies();
         outlineRenderer?.ShowSurface(worldCorners);
+    }
+
+    private void OnSessionStateChanged(ARSessionStateChangedEventArgs args)
+    {
+        if (args.state == ARSessionState.SessionTracking)
+        {
+            if (currentState == ARSurfaceLockState.TrackingLimited ||
+                (currentState == ARSurfaceLockState.Lost && lockedPose.HasValue))
+            {
+                TransitionTo(lockedPose.HasValue
+                    ? ARSurfaceLockState.SurfaceLocked
+                    : ARSurfaceLockState.SearchingPlane);
+            }
+            return;
+        }
+
+        if (currentState == ARSurfaceLockState.SearchingPlane ||
+            currentState == ARSurfaceLockState.PlaneFound)
+        {
+            TransitionTo(ARSurfaceLockState.TrackingLimited);
+            return;
+        }
+
+        if (currentState == ARSurfaceLockState.SurfaceLocked)
+        {
+            TransitionTo(ARSurfaceLockState.TrackingLimited);
+        }
     }
 
     private void ResolveDependencies()
@@ -127,14 +217,40 @@ public class ARSurfaceLockController : MonoBehaviour
         }
     }
 
-    private void SetPlaneDetection(bool enabled)
+    private void SetPlaneDetection(bool enabled, bool preserveLockedPlane)
     {
         if (planeManager == null) return;
 
-        planeManager.enabled = enabled;
+        if (enabled)
+        {
+            planeManager.requestedDetectionMode = requestedDetectionMode;
+        }
+        else
+        {
+            planeManager.requestedDetectionMode = PlaneDetectionMode.None;
+        }
+
+        planeManager.enabled = enabled || preserveLockedPlane;
         foreach (ARPlane plane in planeManager.trackables)
         {
-            plane.gameObject.SetActive(enabled);
+            bool keepLockedPlane = preserveLockedPlane && lockedPlane != null && plane == lockedPlane;
+            plane.gameObject.SetActive(enabled || keepLockedPlane);
+            SetPlaneVisualsVisible(plane, enabled);
+        }
+    }
+
+    private static void SetPlaneVisualsVisible(ARPlane plane, bool visible)
+    {
+        if (plane == null) return;
+
+        foreach (Renderer renderer in plane.GetComponentsInChildren<Renderer>(true))
+        {
+            renderer.enabled = visible;
+        }
+
+        foreach (LineRenderer lineRenderer in plane.GetComponentsInChildren<LineRenderer>(true))
+        {
+            lineRenderer.enabled = visible;
         }
     }
 

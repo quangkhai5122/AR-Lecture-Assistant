@@ -5,6 +5,7 @@ using UnityEngine;
 using TMPro;
 using UnityEngine.UI;
 using UnityEngine.XR.ARFoundation;
+using UnityEngine.XR.ARSubsystems;
 
 public class ARLabelPlacer : MonoBehaviour
 {
@@ -26,6 +27,8 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private string llmProvider = "gemini";
     [SerializeField] private bool geminiMockMode = false;
     [SerializeField] private bool enableTranslationSelectionActions = false;
+    [SerializeField] private bool enableTapToFocusLabel = false;
+    [SerializeField] private FocusedTranslationPanel focusedTranslationPanel;
 
     [Header("Label readability")]
     [SerializeField] private float minScreenSeparationPixels = 96f;
@@ -34,6 +37,9 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private float labelScreenPaddingPixels = 24f;
     [SerializeField] private float minDistanceScale = 0.75f;
     [SerializeField] private float maxDistanceScale = 1.25f;
+    [SerializeField] private float maxSurfaceLabelOffsetRatio = 0.08f;
+    [SerializeField] private float labelSurfaceOffsetMeters = 0.012f;
+    [SerializeField] private bool faceCameraForReadability = true;
     [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
     [SerializeField] private bool useGoogleLensOverlayDefaults = true;
@@ -129,17 +135,17 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         Vector2 resolvedScreenPos = ResolveNonOverlappingScreenPoint(screenPos, translatedText);
-        bool hit = raycastController.TryRaycast(resolvedScreenPos, out Pose hitPose);
+        bool hit = raycastController.TryRaycastHit(resolvedScreenPos, out ARRaycastHit raycastHit);
         Vector2 placedScreenPos = resolvedScreenPos;
         if (!hit && resolvedScreenPos != screenPos)
         {
-            hit = raycastController.TryRaycast(screenPos, out hitPose);
+            hit = raycastController.TryRaycastHit(screenPos, out raycastHit);
             placedScreenPos = screenPos;
         }
 
         if (hit)
         {
-            if (!CreateFixedLabel(translatedText, hitPose)) return false;
+            if (!CreateFixedLabel(translatedText, raycastHit)) return false;
             RegisterPlacedLabel(placedScreenPos, translatedText);
             return true;
         }
@@ -193,7 +199,13 @@ public class ARLabelPlacer : MonoBehaviour
         Pose? fallbackPose = hasCenterHit ? centerPose : cachedPlanePose;
         bool hasFallback = fallbackPose.HasValue;
 
-        ARDocumentSurfaceMapper surfaceMapper = ARDocumentSurfaceMapper.TryCreate(response, raycastController, BBoxPointToScreenPoint);
+        ARDocumentSurfaceMapper surfaceMapper = ARDocumentSurfaceMapper.TryCreate(
+            response,
+            raycastController,
+            BBoxPointToScreenPoint,
+            fallbackPose,
+            surfaceLockController != null ? surfaceLockController.LockedPlane : null
+        );
         if (surfaceMapper != null)
         {
             surfaceLockController?.ShowDocumentSurface(surfaceMapper.WorldCorners);
@@ -204,18 +216,21 @@ public class ARLabelPlacer : MonoBehaviour
         for (int groupIndex = 0; groupIndex < labelGroups.Count; groupIndex++)
         {
             TranslationLabelGroup group = labelGroups[groupIndex];
-            Vector2 imagePoint = group.ImagePoint;
             Vector2 screenPoint = group.ScreenPoint;
             string text = group.Text;
             Vector2 resolvedScreenPoint = ResolveNonOverlappingScreenPoint(screenPoint, text);
-            Vector2 resolvedImagePoint = ScreenPointToImagePoint(resolvedScreenPoint, response.image_width, response.image_height);
             bool labelPlaced = false;
 
             // Path A: SurfaceMapper (homography)
-            if (surfaceMapper != null && surfaceMapper.TryMapImagePointToPose(resolvedImagePoint, out Pose surfacePose))
+            Vector2 surfaceImagePoint = ResolveSurfaceMappedImagePoint(group, resolvedScreenPoint, response);
+            if (surfaceMapper != null && surfaceMapper.TryMapImagePointToPose(surfaceImagePoint, out Pose surfacePose))
             {
-                labelPlaced = CreateFixedLabel(text, surfacePose, group.ScreenSize);
-                if (labelPlaced) RegisterPlacedLabel(resolvedScreenPoint, text);
+                labelPlaced = CreateFixedLabel(text, surfacePose, group.ScreenSize, surfaceMapper.Surface.Plane);
+                if (labelPlaced)
+                {
+                    Vector2 registeredPoint = ImagePointToScreenPoint(surfaceImagePoint, response.image_width, response.image_height);
+                    RegisterPlacedLabel(registeredPoint, text);
+                }
             }
 
             // Path B: Per-block raycast
@@ -340,6 +355,31 @@ public class ARLabelPlacer : MonoBehaviour
         float imageX = screenPoint.x / Mathf.Max(1f, Screen.width) * imageWidth;
         float imageY = (Screen.height - screenPoint.y) / Mathf.Max(1f, Screen.height) * imageHeight;
         return new Vector2(imageX, imageY);
+    }
+
+    private Vector2 ResolveSurfaceMappedImagePoint(
+        TranslationLabelGroup group,
+        Vector2 resolvedScreenPoint,
+        PipelineResponse response
+    )
+    {
+        if (group == null || response == null)
+        {
+            return Vector2.zero;
+        }
+
+        Vector2 requestedImagePoint = ScreenPointToImagePoint(
+            resolvedScreenPoint,
+            response.image_width,
+            response.image_height
+        );
+
+        float maxOffsetX = Mathf.Max(1f, group.BBox.width * Mathf.Clamp01(maxSurfaceLabelOffsetRatio));
+        float maxOffsetY = Mathf.Max(1f, group.BBox.height * Mathf.Clamp01(maxSurfaceLabelOffsetRatio));
+        return new Vector2(
+            group.ImagePoint.x + Mathf.Clamp(requestedImagePoint.x - group.ImagePoint.x, -maxOffsetX, maxOffsetX),
+            group.ImagePoint.y + Mathf.Clamp(requestedImagePoint.y - group.ImagePoint.y, -maxOffsetY, maxOffsetY)
+        );
     }
 
     private List<TranslationLabelGroup> BuildTranslationLabelGroups(PipelineResponse response)
@@ -1230,19 +1270,56 @@ public class ARLabelPlacer : MonoBehaviour
         return CreateFixedLabel(translatedText, hitPose, Vector2.zero);
     }
 
-    private bool CreateFixedLabel(string translatedText, Pose hitPose, Vector2 targetScreenSize)
+    private bool CreateFixedLabel(string translatedText, ARRaycastHit hit)
     {
-        ARAnchor anchor = anchorPlacer.PlaceAnchor(hitPose);
+        return CreateFixedLabel(translatedText, hit, Vector2.zero);
+    }
+
+    private bool CreateFixedLabel(string translatedText, ARRaycastHit hit, Vector2 targetScreenSize)
+    {
+        ARAnchor anchor = anchorPlacer.PlaceAnchor(hit);
         if (anchor == null) return false;
 
+        return CreateFixedLabelOnAnchor(translatedText, hit.pose, targetScreenSize, anchor);
+    }
+
+    private bool CreateFixedLabel(string translatedText, Pose hitPose, Vector2 targetScreenSize)
+    {
+        return CreateFixedLabel(translatedText, hitPose, targetScreenSize, null);
+    }
+
+    private bool CreateFixedLabel(
+        string translatedText,
+        Pose hitPose,
+        Vector2 targetScreenSize,
+        ARPlane plane
+    )
+    {
+        ARAnchor anchor = anchorPlacer.PlaceAnchor(hitPose, plane);
+        if (anchor == null) return false;
+
+        return CreateFixedLabelOnAnchor(translatedText, hitPose, targetScreenSize, anchor);
+    }
+
+    private bool CreateFixedLabelOnAnchor(
+        string translatedText,
+        Pose hitPose,
+        Vector2 targetScreenSize,
+        ARAnchor anchor
+    )
+    {
         GameObject label = Instantiate(fixedLabelPrefab, anchor.transform);
-        label.transform.localPosition = Vector3.zero;
+        label.transform.localPosition = Vector3.up * Mathf.Max(0f, labelSurfaceOffsetMeters);
         label.transform.localRotation = Quaternion.identity;
         ApplyDistanceScale(label, hitPose.position);
 
-        if (label.GetComponent<LabelBillboard>() == null)
+        if (faceCameraForReadability && label.GetComponent<LabelBillboard>() == null)
         {
             label.AddComponent<LabelBillboard>();
+        }
+        else if (!faceCameraForReadability)
+        {
+            label.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
         }
 
         var textComp = label.GetComponentInChildren<TextMeshProUGUI>();
@@ -1254,6 +1331,7 @@ public class ARLabelPlacer : MonoBehaviour
 
         ARLectureVisualPolish.StyleLabel(label);
         FitLabelPanel(label, textComp, targetScreenSize);
+        AttachTapToFocus(label, textComp != null ? textComp.text : translatedText);
         ApplyTranslationVisibility(label);
         if (animateWorldSpaceLabels && translationsVisible)
         {
@@ -1268,6 +1346,77 @@ public class ARLabelPlacer : MonoBehaviour
 
         fixedLabels.Add(label);
         return true;
+    }
+
+    private void AttachTapToFocus(GameObject label, string translatedText)
+    {
+        if (!enableTapToFocusLabel || label == null || string.IsNullOrWhiteSpace(translatedText))
+        {
+            return;
+        }
+
+        foreach (Canvas canvas in label.GetComponentsInChildren<Canvas>(true))
+        {
+            if (canvas.renderMode == RenderMode.WorldSpace && canvas.worldCamera == null)
+            {
+                canvas.worldCamera = Camera.main;
+            }
+
+            if (canvas.GetComponent<GraphicRaycaster>() == null)
+            {
+                canvas.gameObject.AddComponent<GraphicRaycaster>();
+            }
+        }
+
+        Image targetImage = ResolveTapTarget(label);
+        if (targetImage == null) return;
+
+        Button button = targetImage.GetComponent<Button>();
+        if (button == null)
+        {
+            button = targetImage.gameObject.AddComponent<Button>();
+        }
+
+        targetImage.raycastTarget = true;
+        button.targetGraphic = targetImage;
+        string focusedText = translatedText.Trim();
+        button.onClick.AddListener(() => ResolveFocusedTranslationPanel().Show(focusedText));
+    }
+
+    private Image ResolveTapTarget(GameObject label)
+    {
+        Image fallback = null;
+        foreach (Image image in label.GetComponentsInChildren<Image>(true))
+        {
+            if (image == null) continue;
+
+            if (fallback == null)
+            {
+                fallback = image;
+            }
+
+            if (image.name.ToLowerInvariant().Contains("background"))
+            {
+                return image;
+            }
+        }
+
+        return fallback;
+    }
+
+    private FocusedTranslationPanel ResolveFocusedTranslationPanel()
+    {
+        if (focusedTranslationPanel == null)
+        {
+            focusedTranslationPanel = FindAnyObjectByType<FocusedTranslationPanel>();
+        }
+
+        if (focusedTranslationPanel == null)
+        {
+            focusedTranslationPanel = gameObject.AddComponent<FocusedTranslationPanel>();
+        }
+
+        return focusedTranslationPanel;
     }
 
     private void ApplyTranslationVisibility()

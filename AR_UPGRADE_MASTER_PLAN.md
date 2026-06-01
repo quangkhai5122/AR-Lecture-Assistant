@@ -10,7 +10,7 @@ The target is not only to make the app work. The target is to make the AR nature
 - The app locks onto a real board or slide.
 - Translations appear on that real surface, not as generic screen UI.
 - Labels stay stable when the user moves the phone.
-- The user flow remains simple: two visible buttons, clear status, no debug clutter.
+- The user flow remains simple: five visible controls, clear status, no debug clutter.
 
 ## Current Technical Baseline
 
@@ -48,7 +48,7 @@ The target is not only to make the app work. The target is to make the AR nature
 - Anchor creation is minimal and should be upgraded to attach to AR trackables when possible.
 - Mapping from OCR bbox to AR world surface needs stronger validation and visual polish.
 - Capture currently supports AR camera raw, but default behavior and demo path must make this reliable.
-- Debug/transcript/advanced UI should remain hidden in demo mode.
+- Advanced debug controls should remain hidden in demo mode, while transcript and translation visibility stay available.
 - There is no structured demo acceptance checklist.
 
 ## Target 10/10 Experience
@@ -56,14 +56,14 @@ The target is not only to make the app work. The target is to make the AR nature
 The final demo should follow this flow:
 
 1. User opens the app.
-2. The app shows a minimal camera view with two buttons: `Quét` and `Xóa`.
+2. The app shows the default five-button demo UI: `Hide VN`, `Transcript`, `Quét`, `Dịch`, and `Xóa`.
 3. User points the phone at a board or projected slide.
 4. User taps `Quét`.
 5. The app detects a plane and draws a subtle AR outline around the board/slide surface.
-6. The primary button changes to `Dịch`.
-7. User taps `Dịch`.
-8. The app captures an AR camera frame, sends it to backend OCR/translation, and maps the result back to the detected surface.
-9. Translated labels animate into place directly on the board/slide.
+6. User taps `Dịch`.
+7. The app captures an AR camera frame, sends it to backend OCR/translation, and maps the result back to the detected surface.
+8. Translated labels animate into place directly on the board/slide.
+9. User can tap `Hide VN` to hide translations and tap again to show them.
 10. User moves left/right or tilts the phone. Labels remain attached to the physical surface.
 11. User taps `Xóa`. The scene resets cleanly.
 
@@ -84,7 +84,7 @@ Use these metrics as the final scoring rubric.
 
 All implementation agents should follow these rules:
 
-- Keep demo mode simple. The default visible UI must remain two buttons.
+- Keep demo mode simple. The default visible UI must remain the five core controls: `Hide VN`, `Transcript`, `Quét`, `Dịch`, and `Xóa`.
 - Do not remove backend mock mode. It is necessary for deterministic demos.
 - Prefer adding small focused components over rewriting all scene logic.
 - Keep runtime debug tools behind serialized flags or inactive scene objects.
@@ -156,8 +156,8 @@ Duration: 1 sprint.
 Tasks:
 
 - Confirm the default scene is `Assets/Scenes/MainScene.unity`.
-- Confirm demo UI has only two visible buttons.
-- Confirm debug, freeze, transcript, and advanced action buttons are hidden in demo mode.
+- Confirm demo UI shows `Hide VN`, `Transcript`, `Quét`, `Dịch`, and `Xóa`.
+- Confirm debug and freeze controls are hidden in the default demo mode.
 - Confirm backend can run in mock mode.
 - Confirm Android build settings target ARCore-compatible devices.
 
@@ -175,7 +175,7 @@ Output:
 
 Acceptance criteria:
 
-- Opening the main scene in Unity shows only required demo controls.
+- Opening the main scene in Unity shows the five required demo controls.
 - No debug panel is visible by default.
 - Backend mock request returns pipeline blocks.
 - The project opens without missing script references.
@@ -632,14 +632,17 @@ Objective: make the user flow obvious and teacher-friendly.
 
 Duration: 1 sprint.
 
-### Sprint 6.1 - Two-Button Demo Flow
+### Sprint 6.1 - Five-Button Demo Flow
 
 Tasks:
 
-- Preserve only two visible controls:
-  - primary action: `Quét` / `Dịch` / `Dịch lại` / `Thử lại`
-  - secondary action: `Xóa`
-- Hide debug, transcript, freeze, and provider controls.
+- Preserve five visible controls:
+  - `Hide VN` / `Show VN`
+  - `Transcript`
+  - `Quét`
+  - `Dịch` / `Dịch lại` / `Thử lại`
+  - `Xóa`
+- Hide debug, freeze, and provider controls from the default screen.
 - Ensure no text overflows buttons.
 
 Target files:
@@ -655,7 +658,7 @@ Output:
 
 Acceptance criteria:
 
-- Only two buttons are visible in demo mode.
+- Exactly five core controls are visible in demo mode.
 - User can complete demo with no explanation.
 - Status messages are short and friendly.
 
@@ -789,7 +792,7 @@ Acceptance criteria:
 - Detect document surface corners better.
 - Map OCR bbox to AR world surface.
 - Use stable anchors attached to AR tracking where possible.
-- Keep only two visible buttons.
+- Keep only the five visible core controls on the default screen.
 - Add demo checklist and demo script.
 
 ### P1 - Should Have
@@ -804,7 +807,7 @@ Acceptance criteria:
 ### P2 - Nice to Have
 
 - Tap-to-focus translation.
-- Speech transcript as optional hidden mode.
+- Speech transcript as a default visible control with its deeper panels still optional.
 - Persist anchors across short tracking interruptions.
 - Light estimation styling.
 - Occlusion/depth experiments.
@@ -819,7 +822,7 @@ Acceptance criteria:
 | OCR | Backend tests + sample slide | Key text blocks returned. |
 | Translation | Backend tests | Text translated and formulas preserved. |
 | World labels | Device movement test | Labels remain on slide while moving. |
-| UI | Visual inspection | Only two visible buttons. |
+| UI | Visual inspection | Exactly five visible core controls: `Hide VN`, `Transcript`, `Quét`, `Dịch`, and `Xóa`. |
 | Error handling | Backend offline test | Friendly retry message, no crash. |
 | Performance | Timed demo | Mock under 1s, real under target budget. |
 | Repeatability | Five-run test | Five consecutive successful demos. |
@@ -871,7 +874,7 @@ Do not touch:
 
 Scope:
 
-- two-button flow
+- five-button flow
 - status messages
 - friendly errors
 - demo script
@@ -886,7 +889,7 @@ Do not touch:
 The upgrade is complete only when all of the following are true:
 
 - App runs on Android ARCore device.
-- Main demo uses only two visible buttons.
+- Main demo uses only five visible core controls.
 - User can lock onto a slide/board.
 - Surface outline appears in AR.
 - Translation labels appear on the physical surface.
@@ -922,6 +925,6 @@ Use this explanation during presentation:
 
 - If short on time, prioritize visible AR proof over backend sophistication.
 - The strongest "wow" moment is: outline locks onto the board, then translated labels appear on that surface and stay there while the phone moves.
-- Avoid adding many buttons. Extra features should be hidden behind inspector flags or debug mode.
+- Avoid adding more default buttons. Extra features should stay behind inspector flags or debug mode.
 - Keep mock mode excellent. A controlled demo is better than an unstable real-provider demo.
 - Record a successful screen capture after each major phase. This protects the project if live network or OCR fails during presentation.

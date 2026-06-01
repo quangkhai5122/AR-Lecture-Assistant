@@ -24,6 +24,19 @@ public class ARRaycastController : MonoBehaviour
     {
         hitPose = Pose.identity;
 
+        if (!TryRaycastHit(screenPosition, out ARRaycastHit hit))
+        {
+            return false;
+        }
+
+        hitPose = hit.pose;
+        return true;
+    }
+
+    public bool TryRaycastHit(Vector2 screenPosition, out ARRaycastHit hit)
+    {
+        hit = default;
+
         if (raycastManager == null)
             raycastManager = FindAnyObjectByType<ARRaycastManager>();
         if (raycastManager == null) return false;
@@ -31,14 +44,14 @@ public class ARRaycastController : MonoBehaviour
         // Thử chính xác nhất trước
         if (raycastManager.Raycast(screenPosition, hits, TrackableType.PlaneWithinPolygon))
         {
-            hitPose = hits[0].pose;
+            hit = hits[0];
             return true;
         }
 
         // Fallback: bounds + estimated (phạm vi lớn hơn)
         if (raycastManager.Raycast(screenPosition, hits, AllPlaneTypes))
         {
-            hitPose = hits[0].pose;
+            hit = hits[0];
             return true;
         }
 
@@ -52,5 +65,18 @@ public class ARRaycastController : MonoBehaviour
     {
         Vector2 center = new Vector2(Screen.width / 2f, Screen.height / 2f);
         return TryRaycast(center, out hitPose);
+    }
+
+    public bool TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit)
+    {
+        Vector2 center = new Vector2(Screen.width / 2f, Screen.height / 2f);
+        if (TryRaycastHit(center, out hit))
+        {
+            hitPose = hit.pose;
+            return true;
+        }
+
+        hitPose = Pose.identity;
+        return false;
     }
 }

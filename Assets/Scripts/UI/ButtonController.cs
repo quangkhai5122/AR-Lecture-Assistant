@@ -25,12 +25,11 @@ public class ButtonController : MonoBehaviour
 
     [Header("OCR / Translate Pipeline")]
     [SerializeField] private bool useBackendPipeline = true;
-    [SerializeField] private bool backendMockMode = false;
-    [SerializeField] private bool fallbackToUnityMockOnBackendError = true;
+    [SerializeField] private bool backendMockMode = true;
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private BackendPipelineMode backendPipelineMode = BackendPipelineMode.PipelineFrame;
     [SerializeField] private string ocrProvider = "";
-    [SerializeField] private string translationProvider = "google";
+    [SerializeField] private string translationProvider = "mock";
     [SerializeField] private FrameCaptureService frameCaptureService;
     [SerializeField] private HttpPipelineClient httpPipelineClient;
 
@@ -41,8 +40,9 @@ public class ButtonController : MonoBehaviour
     [SerializeField] private Button hideTranslationsButton;
     [SerializeField] private Button freezeButton;
 
-    [Header("Demo Mode")]
-    [SerializeField] private bool showTranslationVisibilityButton = false;
+    [Header("UI Mode")]
+    [SerializeField] private bool useCompactDemoControls = false;
+    [SerializeField] private bool showTranslationVisibilityButton = true;
 
     [Header("Debug")]
     [SerializeField] private bool showAdvancedControls = false;
@@ -52,11 +52,13 @@ public class ButtonController : MonoBehaviour
 
     private void Awake()
     {
-        ApplySimpleTwoButtonMode();
+        ApplyControlVisibility();
     }
 
     private void Start()
     {
+        ResolveButtonReferences();
+
         if (arPlaneManager == null)
         {
             arPlaneManager = FindAnyObjectByType<ARPlaneManager>();
@@ -93,12 +95,13 @@ public class ButtonController : MonoBehaviour
         if (freezeButton != null)
         {
             freezeButton.onClick.AddListener(OnFreezePressed);
-            freezeButton.gameObject.SetActive(showAdvancedControls);
         }
         if (stateManager != null) stateManager.OnStateChanged.AddListener(OnStateChanged);
 
+        ApplyControlVisibility();
         UpdateButtonStates();
         UpdatePrimaryActionLabel();
+        UpdateTranslateActionLabel();
         SetButtonLabel(clearButton, "Xóa");
         UpdateFreezeVisual();
         UpdateHideTranslationsVisual();
@@ -118,12 +121,22 @@ public class ButtonController : MonoBehaviour
 
     private void OnScanPressed()
     {
-        if (stateManager != null &&
-            (stateManager.CurrentState == AppState.PlaneDetected ||
-             stateManager.CurrentState == AppState.Anchored))
+        if (useCompactDemoControls && stateManager != null)
         {
-            OnTranslatePressed();
-            return;
+            if (stateManager.CurrentState == AppState.PlaneDetected ||
+                stateManager.CurrentState == AppState.Anchored)
+            {
+                OnTranslatePressed();
+                return;
+            }
+
+            if (stateManager.CurrentState == AppState.Error &&
+                CanRetryTranslationOnLockedSurface())
+            {
+                stateManager.SetState(AppState.PlaneDetected);
+                OnTranslatePressed();
+                return;
+            }
         }
 
         StartScanning();
@@ -149,8 +162,11 @@ public class ButtonController : MonoBehaviour
 
     private async void OnTranslatePressed()
     {
-        if (stateManager.CurrentState != AppState.PlaneDetected &&
-            stateManager.CurrentState != AppState.Anchored)
+        AppState currentState = stateManager != null ? stateManager.CurrentState : AppState.Idle;
+        bool retryOnLockedSurface = currentState == AppState.Error && CanRetryTranslationOnLockedSurface();
+        if (currentState != AppState.PlaneDetected &&
+            currentState != AppState.Anchored &&
+            !retryOnLockedSurface)
         {
             stateManager.SetError("Chưa thấy bảng/slide. Hãy bấm Quét trước.");
             debugPanel?.UpdateTrackingState("No plane detected");
@@ -417,6 +433,7 @@ public class ButtonController : MonoBehaviour
             if (!string.IsNullOrWhiteSpace(frameCaptureService.LastCaptureWarning))
             {
                 debugPanel?.UpdateTrackingState(frameCaptureService.LastCaptureWarning);
+                stateManager?.SetStatusMessage("Không lấy được ảnh AR, đang dùng ảnh dự phòng.");
             }
             else if (!string.IsNullOrWhiteSpace(source))
             {
@@ -469,14 +486,30 @@ public class ButtonController : MonoBehaviour
     private void OnFreezePressed()
     {
         isFrozen = !isFrozen;
-        SetPlaneTrackingEnabled(!isFrozen);
+        ARSurfaceLockController lockController = ResolveSurfaceLockController();
+        if (lockController != null)
+        {
+            if (isFrozen)
+            {
+                lockController.PausePlaneDetection();
+            }
+            else
+            {
+                lockController.ResumePlaneDetection();
+            }
+        }
+        else
+        {
+            SetPlaneTrackingEnabled(!isFrozen);
+        }
+
         UpdateFreezeVisual();
         debugPanel?.UpdateTrackingState(isFrozen ? "Frozen" : stateManager.CurrentState.ToString());
     }
 
     private void OnStateChanged(AppState newState)
     {
-        if (newState == AppState.Idle || newState == AppState.Error)
+        if (newState == AppState.Idle)
         {
             isFrozen = false;
             ARSurfaceLockController lockController = ResolveSurfaceLockController();
@@ -490,11 +523,17 @@ public class ButtonController : MonoBehaviour
             }
             UpdateFreezeVisual();
         }
+        else if (newState == AppState.Error)
+        {
+            isFrozen = false;
+            UpdateFreezeVisual();
+        }
 
         debugPanel?.UpdateTrackingState(isFrozen ? "Frozen" : newState.ToString());
         UpdateHideTranslationsVisual();
         UpdateButtonStates();
         UpdatePrimaryActionLabel();
+        UpdateTranslateActionLabel();
     }
 
     private void UpdateButtonStates()
@@ -510,7 +549,12 @@ public class ButtonController : MonoBehaviour
 
         if (translateButton != null)
         {
-            translateButton.interactable = false;
+            translateButton.interactable =
+                !useCompactDemoControls &&
+                state != AppState.Translating &&
+                (state == AppState.PlaneDetected ||
+                 state == AppState.Anchored ||
+                 (state == AppState.Error && CanRetryTranslationOnLockedSurface()));
         }
 
         if (clearButton != null)
@@ -536,6 +580,31 @@ public class ButtonController : MonoBehaviour
         if (scanButton == null || stateManager == null) return;
 
         string label;
+        if (!useCompactDemoControls)
+        {
+            switch (stateManager.CurrentState)
+            {
+                case AppState.Scanning:
+                    label = "Đang quét";
+                    break;
+                case AppState.Translating:
+                    label = "Đợi";
+                    break;
+                case AppState.PlaneDetected:
+                case AppState.Anchored:
+                case AppState.Error:
+                    label = "Quét lại";
+                    break;
+                case AppState.Idle:
+                default:
+                    label = "Quét";
+                    break;
+            }
+
+            SetButtonLabel(scanButton, label);
+            return;
+        }
+
         switch (stateManager.CurrentState)
         {
             case AppState.Scanning:
@@ -562,16 +631,63 @@ public class ButtonController : MonoBehaviour
         SetButtonLabel(scanButton, label);
     }
 
-    private void ApplySimpleTwoButtonMode()
+    private void UpdateTranslateActionLabel()
     {
-        SetButtonObjectActive(translateButton, false);
-        SetButtonObjectActive(hideTranslationsButton, showTranslationVisibilityButton);
-        SetButtonObjectActive(freezeButton, false);
+        if (translateButton == null || stateManager == null) return;
 
-        SetNamedObjectActive("TranslateButton", false);
+        string label;
+        switch (stateManager.CurrentState)
+        {
+            case AppState.Translating:
+                label = "Đang dịch";
+                break;
+            case AppState.Anchored:
+                label = "Dịch lại";
+                break;
+            case AppState.Error:
+                label = CanRetryTranslationOnLockedSurface() ? "Thử lại" : "Dịch";
+                break;
+            case AppState.PlaneDetected:
+            case AppState.Scanning:
+            case AppState.Idle:
+            default:
+                label = "Dịch";
+                break;
+        }
+
+        SetButtonLabel(translateButton, label);
+    }
+
+    private void ApplyControlVisibility()
+    {
+        bool showTranslateButton = !useCompactDemoControls;
+        SetButtonObjectActive(translateButton, showTranslateButton);
+        SetButtonObjectActive(hideTranslationsButton, showTranslationVisibilityButton);
+        SetButtonObjectActive(freezeButton, showAdvancedControls);
+
+        SetNamedObjectActive("TranslateButton", showTranslateButton);
         SetNamedObjectActive("HideTranslationsButton", showTranslationVisibilityButton);
-        SetNamedObjectActive("FreezeButton", false);
-        SetNamedObjectActive("ToggleDebugButton", false);
+        SetNamedObjectActive("FreezeButton", showAdvancedControls);
+        SetNamedObjectActive("ToggleDebugButton", showAdvancedControls);
+    }
+
+    private void ResolveButtonReferences()
+    {
+        if (scanButton == null) scanButton = FindButtonByName("ScanButton");
+        if (translateButton == null) translateButton = FindButtonByName("TranslateButton");
+        if (clearButton == null) clearButton = FindButtonByName("ClearButton");
+        if (hideTranslationsButton == null) hideTranslationsButton = FindButtonByName("HideTranslationsButton");
+        if (freezeButton == null) freezeButton = FindButtonByName("FreezeButton");
+    }
+
+    private static Button FindButtonByName(string objectName)
+    {
+        foreach (Button button in FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (button.name == objectName) return button;
+        }
+
+        return null;
     }
 
     private void SetPlaneTrackingEnabled(bool enabled)
@@ -592,7 +708,20 @@ public class ButtonController : MonoBehaviour
             surfaceLockController = FindAnyObjectByType<ARSurfaceLockController>();
         }
 
+        if (surfaceLockController == null)
+        {
+            surfaceLockController = gameObject.AddComponent<ARSurfaceLockController>();
+        }
+
         return surfaceLockController;
+    }
+
+    private bool CanRetryTranslationOnLockedSurface()
+    {
+        ARSurfaceLockController lockController = ResolveSurfaceLockController();
+        return lockController != null &&
+               lockController.HasLockedSurface &&
+               lockController.CurrentState == ARSurfaceLockState.SurfaceLocked;
     }
 
     private void UpdateFreezeVisual()

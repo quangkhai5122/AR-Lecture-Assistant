@@ -17,6 +17,7 @@ class SurfaceCrop:
     original_width: int
     original_height: int
     source_corners: tuple[tuple[float, float], tuple[float, float], tuple[float, float], tuple[float, float]]
+    perspective_coefficients: tuple[float, float, float, float, float, float, float, float] | None = None
 
 
 class DocumentSurfaceService:
@@ -171,6 +172,7 @@ class DocumentSurfaceService:
             original_width=width,
             original_height=height,
             source_corners=tuple(points),
+            perspective_coefficients=coefficients,
         )
 
     def map_blocks_from_crop(self, blocks: list[dict[str, Any]], crop: SurfaceCrop) -> list[dict[str, Any]]:
@@ -319,6 +321,17 @@ class DocumentSurfaceService:
         return tuple(float(value) for value in solved)
 
     def _map_crop_point_to_source(self, crop: SurfaceCrop, x: float, y: float) -> tuple[float, float]:
+        if crop.perspective_coefficients is not None:
+            a, b, c, d, e, f, g, h = crop.perspective_coefficients
+            denominator = g * x + h * y + 1.0
+            if abs(denominator) > 1e-9:
+                source_x = (a * x + b * y + c) / denominator
+                source_y = (d * x + e * y + f) / denominator
+                return (
+                    self._clamp_float(source_x, 0.0, float(crop.original_width)),
+                    self._clamp_float(source_y, 0.0, float(crop.original_height)),
+                )
+
         u = self._clamp_float(x / max(1.0, float(crop.image.width)), 0.0, 1.0)
         v = self._clamp_float(y / max(1.0, float(crop.image.height)), 0.0, 1.0)
 

@@ -98,6 +98,7 @@ public class FrameCaptureService : MonoBehaviour
             TryCaptureARCameraRaw(out CapturedFrame cameraFrame))
         {
             LastCaptureSource = "ar_camera_raw";
+            Debug.Log($"[FrameCaptureService] Captured frame via ar_camera_raw ({cameraFrame.width}x{cameraFrame.height}).");
             tcs.TrySetResult(cameraFrame);
             yield break;
         }
@@ -105,6 +106,7 @@ public class FrameCaptureService : MonoBehaviour
         if (captureSource == FrameCaptureSource.ARCameraRaw)
         {
             LastCaptureWarning = "AR camera CPU image is unavailable.";
+            Debug.LogWarning("[FrameCaptureService] " + LastCaptureWarning);
             tcs.TrySetException(new InvalidOperationException("Cannot acquire AR camera CPU image."));
             yield break;
         }
@@ -128,6 +130,7 @@ public class FrameCaptureService : MonoBehaviour
         {
             CapturedFrame frame = CaptureScreenshotFrame(uiMaskRects);
             LastCaptureSource = "screenshot";
+            Debug.Log($"[FrameCaptureService] Captured frame via screenshot ({frame.width}x{frame.height}).");
             tcs.TrySetResult(frame);
         }
         catch (Exception)
