@@ -14,6 +14,7 @@ public struct CapturedFrame
     public string imageBase64;
     public int width;
     public int height;
+    public string captureSource;
 }
 
 public enum FrameCaptureSource
@@ -37,7 +38,7 @@ public enum FrameImageEncoding
 public class FrameCaptureService : MonoBehaviour
 {
     [Header("Capture Source")]
-    public FrameCaptureSource captureSource = FrameCaptureSource.Screenshot;
+    public FrameCaptureSource captureSource = FrameCaptureSource.Auto;
     [SerializeField] private ARCameraManager arCameraManager;
 
     [Tooltip("Cố chọn AR camera configuration có độ phân giải cao nhất trước khi capture OCR.")]
@@ -70,6 +71,9 @@ public class FrameCaptureService : MonoBehaviour
 
     private bool cameraConfigurationApplied;
 
+    public string LastCaptureSource { get; private set; } = "none";
+    public string LastCaptureWarning { get; private set; } = string.Empty;
+
     private void OnEnable()
     {
         cameraConfigurationApplied = false;
@@ -85,19 +89,30 @@ public class FrameCaptureService : MonoBehaviour
 
     private IEnumerator CaptureCoroutine(TaskCompletionSource<CapturedFrame> tcs)
     {
+        LastCaptureSource = "none";
+        LastCaptureWarning = string.Empty;
+
         // Do not change AR camera configuration here; it can restart the camera feed during Translate.
         // Bước 1: Thử AR Camera Raw (không cần WaitForEndOfFrame)
         if (captureSource != FrameCaptureSource.Screenshot &&
             TryCaptureARCameraRaw(out CapturedFrame cameraFrame))
         {
+            LastCaptureSource = "ar_camera_raw";
             tcs.TrySetResult(cameraFrame);
             yield break;
         }
 
         if (captureSource == FrameCaptureSource.ARCameraRaw)
         {
+            LastCaptureWarning = "AR camera CPU image is unavailable.";
             tcs.TrySetException(new InvalidOperationException("Cannot acquire AR camera CPU image."));
             yield break;
+        }
+
+        if (captureSource == FrameCaptureSource.Auto)
+        {
+            LastCaptureWarning = "AR camera CPU image unavailable; using screenshot fallback.";
+            Debug.LogWarning("[FrameCaptureService] " + LastCaptureWarning);
         }
 
         // Bước 2: Screenshot — BẮT BUỘC phải đợi WaitForEndOfFrame trên Android
@@ -112,6 +127,7 @@ public class FrameCaptureService : MonoBehaviour
         try
         {
             CapturedFrame frame = CaptureScreenshotFrame(uiMaskRects);
+            LastCaptureSource = "screenshot";
             tcs.TrySetResult(frame);
         }
         catch (Exception)
@@ -120,6 +136,9 @@ public class FrameCaptureService : MonoBehaviour
             try
             {
                 CapturedFrame frame = CaptureCameraReadPixels();
+                LastCaptureSource = "camera_read_pixels";
+                LastCaptureWarning = "Screenshot capture failed; used Camera.main ReadPixels fallback.";
+                Debug.LogWarning("[FrameCaptureService] " + LastCaptureWarning);
                 tcs.TrySetResult(frame);
             }
             catch (Exception ex2)
@@ -188,7 +207,8 @@ public class FrameCaptureService : MonoBehaviour
                     frameId = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff"),
                     imageBase64 = Convert.ToBase64String(encodedImage),
                     width = cameraTexture.width,
-                    height = cameraTexture.height
+                    height = cameraTexture.height,
+                    captureSource = "ar_camera_raw"
                 };
                 return true;
             }
@@ -217,7 +237,8 @@ public class FrameCaptureService : MonoBehaviour
                 frameId = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff"),
                 imageBase64 = Convert.ToBase64String(encodedImage),
                 width = uploadTexture.width,
-                height = uploadTexture.height
+                height = uploadTexture.height,
+                captureSource = "screenshot"
             };
         }
         finally
@@ -264,7 +285,8 @@ public class FrameCaptureService : MonoBehaviour
                 frameId = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff"),
                 imageBase64 = Convert.ToBase64String(encodedImage),
                 width = size.x,
-                height = size.y
+                height = size.y,
+                captureSource = "camera_read_pixels"
             };
         }
         finally

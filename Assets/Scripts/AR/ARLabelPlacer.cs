@@ -15,6 +15,7 @@ public class ARLabelPlacer : MonoBehaviour
     [Header("References")]
     [SerializeField] private ARAnchorPlacer anchorPlacer;
     [SerializeField] private ARRaycastController raycastController;
+    [SerializeField] private ARSurfaceLockController surfaceLockController;
     [SerializeField] private Transform subtitleContainer;     // Parent cho subtitle
 
     [Header("Selection Actions")]
@@ -48,6 +49,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private float lensOverlayWidthExpansion = 1.32f;
     [SerializeField] private float lensOverlayHeightExpansion = 1.28f;
     [SerializeField] private int lensOverlayMaxLines = 3;
+    [SerializeField] private bool animateWorldSpaceLabels = true;
 
     // Quản lý nhiều label cùng lúc
     private List<GameObject> fixedLabels = new List<GameObject>();
@@ -172,6 +174,8 @@ public class ARLabelPlacer : MonoBehaviour
             raycastController = FindAnyObjectByType<ARRaycastController>();
         if (anchorPlacer == null)
             anchorPlacer = FindAnyObjectByType<ARAnchorPlacer>();
+        if (surfaceLockController == null)
+            surfaceLockController = FindAnyObjectByType<ARSurfaceLockController>();
         if (raycastController == null || anchorPlacer == null || fixedLabelPrefab == null)
         {
             Debug.LogWarning($"[ARLabelPlacer] PlacePipelineLabels: missing deps");
@@ -189,7 +193,11 @@ public class ARLabelPlacer : MonoBehaviour
         Pose? fallbackPose = hasCenterHit ? centerPose : cachedPlanePose;
         bool hasFallback = fallbackPose.HasValue;
 
-        DocumentSurfaceMapper surfaceMapper = DocumentSurfaceMapper.TryCreate(response, raycastController, BBoxPointToScreenPoint);
+        ARDocumentSurfaceMapper surfaceMapper = ARDocumentSurfaceMapper.TryCreate(response, raycastController, BBoxPointToScreenPoint);
+        if (surfaceMapper != null)
+        {
+            surfaceLockController?.ShowDocumentSurface(surfaceMapper.WorldCorners);
+        }
 
         int placed = 0;
 
@@ -1246,8 +1254,19 @@ public class ARLabelPlacer : MonoBehaviour
 
         ARLectureVisualPolish.StyleLabel(label);
         FitLabelPanel(label, textComp, targetScreenSize);
-        fixedLabels.Add(label);
         ApplyTranslationVisibility(label);
+        if (animateWorldSpaceLabels && translationsVisible)
+        {
+            ARLabelRevealAnimator revealAnimator = label.GetComponent<ARLabelRevealAnimator>();
+            if (revealAnimator == null)
+            {
+                revealAnimator = label.AddComponent<ARLabelRevealAnimator>();
+            }
+
+            revealAnimator.Play(Mathf.Min(0.32f, fixedLabels.Count * 0.045f));
+        }
+
+        fixedLabels.Add(label);
         return true;
     }
 
@@ -1476,177 +1495,4 @@ public class ARLabelPlacer : MonoBehaviour
         }
     }
 
-    private sealed class DocumentSurfaceMapper
-    {
-        private readonly Vector2[] imageCorners;
-        private readonly Vector3[] worldCorners;
-        private readonly Quaternion rotation;
-
-        private DocumentSurfaceMapper(Vector2[] imageCorners, Vector3[] worldCorners, Quaternion rotation)
-        {
-            this.imageCorners = imageCorners;
-            this.worldCorners = worldCorners;
-            this.rotation = rotation;
-        }
-
-        public static DocumentSurfaceMapper TryCreate(
-            PipelineResponse response,
-            ARRaycastController raycastController,
-            System.Func<Vector2, PipelineResponse, Vector2> imageToScreenPoint)
-        {
-            if (response?.document_surface?.corners == null ||
-                response.document_surface.corners.Length < 8 ||
-                raycastController == null ||
-                imageToScreenPoint == null)
-            {
-                return null;
-            }
-
-            Vector2[] imageCorners = ParseCorners(response.document_surface.corners);
-            Vector3[] worldCorners = new Vector3[4];
-            Quaternion rotation = Quaternion.identity;
-
-            for (int i = 0; i < imageCorners.Length; i++)
-            {
-                Vector2 screenPoint = imageToScreenPoint(imageCorners[i], response);
-                if (!raycastController.TryRaycast(screenPoint, out Pose hitPose))
-                {
-                    return null;
-                }
-
-                worldCorners[i] = hitPose.position;
-                if (i == 0) rotation = hitPose.rotation;
-            }
-
-            return new DocumentSurfaceMapper(imageCorners, worldCorners, rotation);
-        }
-
-        public bool TryMapImagePointToPose(Vector2 imagePoint, out Pose pose)
-        {
-            pose = Pose.identity;
-            if (!TryImagePointToSurfaceUv(imagePoint, out Vector2 uv))
-            {
-                return false;
-            }
-
-            Vector3 top = Vector3.Lerp(worldCorners[0], worldCorners[1], uv.x);
-            Vector3 bottom = Vector3.Lerp(worldCorners[3], worldCorners[2], uv.x);
-            Vector3 position = Vector3.Lerp(top, bottom, uv.y);
-            pose = new Pose(position, rotation);
-            return true;
-        }
-
-        private bool TryImagePointToSurfaceUv(Vector2 imagePoint, out Vector2 uv)
-        {
-            uv = Vector2.zero;
-            double[,] matrix =
-            {
-                { imageCorners[0].x, imageCorners[0].y, 1.0, 0.0, 0.0, 0.0, -0.0 * imageCorners[0].x, -0.0 * imageCorners[0].y },
-                { 0.0, 0.0, 0.0, imageCorners[0].x, imageCorners[0].y, 1.0, -0.0 * imageCorners[0].x, -0.0 * imageCorners[0].y },
-                { imageCorners[1].x, imageCorners[1].y, 1.0, 0.0, 0.0, 0.0, -1.0 * imageCorners[1].x, -1.0 * imageCorners[1].y },
-                { 0.0, 0.0, 0.0, imageCorners[1].x, imageCorners[1].y, 1.0, -0.0 * imageCorners[1].x, -0.0 * imageCorners[1].y },
-                { imageCorners[2].x, imageCorners[2].y, 1.0, 0.0, 0.0, 0.0, -1.0 * imageCorners[2].x, -1.0 * imageCorners[2].y },
-                { 0.0, 0.0, 0.0, imageCorners[2].x, imageCorners[2].y, 1.0, -1.0 * imageCorners[2].x, -1.0 * imageCorners[2].y },
-                { imageCorners[3].x, imageCorners[3].y, 1.0, 0.0, 0.0, 0.0, -0.0 * imageCorners[3].x, -0.0 * imageCorners[3].y },
-                { 0.0, 0.0, 0.0, imageCorners[3].x, imageCorners[3].y, 1.0, -1.0 * imageCorners[3].x, -1.0 * imageCorners[3].y },
-            };
-            double[] values = { 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0 };
-
-            if (!SolveLinearSystem(matrix, values, out double[] h))
-            {
-                return false;
-            }
-
-            double denominator = h[6] * imagePoint.x + h[7] * imagePoint.y + 1.0;
-            if (System.Math.Abs(denominator) < 0.000001)
-            {
-                return false;
-            }
-
-            float u = (float)((h[0] * imagePoint.x + h[1] * imagePoint.y + h[2]) / denominator);
-            float v = (float)((h[3] * imagePoint.x + h[4] * imagePoint.y + h[5]) / denominator);
-            uv = new Vector2(Mathf.Clamp01(u), Mathf.Clamp01(v));
-            return true;
-        }
-
-        private static Vector2[] ParseCorners(float[] corners)
-        {
-            return new[]
-            {
-                new Vector2(corners[0], corners[1]),
-                new Vector2(corners[2], corners[3]),
-                new Vector2(corners[4], corners[5]),
-                new Vector2(corners[6], corners[7]),
-            };
-        }
-
-        private static bool SolveLinearSystem(double[,] matrix, double[] values, out double[] solution)
-        {
-            int size = values.Length;
-            solution = new double[size];
-            double[,] augmented = new double[size, size + 1];
-
-            for (int row = 0; row < size; row++)
-            {
-                for (int column = 0; column < size; column++)
-                {
-                    augmented[row, column] = matrix[row, column];
-                }
-                augmented[row, size] = values[row];
-            }
-
-            for (int pivot = 0; pivot < size; pivot++)
-            {
-                int bestRow = pivot;
-                double bestValue = System.Math.Abs(augmented[pivot, pivot]);
-                for (int row = pivot + 1; row < size; row++)
-                {
-                    double candidate = System.Math.Abs(augmented[row, pivot]);
-                    if (candidate > bestValue)
-                    {
-                        bestValue = candidate;
-                        bestRow = row;
-                    }
-                }
-
-                if (bestValue < 0.0000001)
-                {
-                    return false;
-                }
-
-                if (bestRow != pivot)
-                {
-                    for (int column = pivot; column <= size; column++)
-                    {
-                        (augmented[pivot, column], augmented[bestRow, column]) =
-                            (augmented[bestRow, column], augmented[pivot, column]);
-                    }
-                }
-
-                double divisor = augmented[pivot, pivot];
-                for (int column = pivot; column <= size; column++)
-                {
-                    augmented[pivot, column] /= divisor;
-                }
-
-                for (int row = 0; row < size; row++)
-                {
-                    if (row == pivot) continue;
-
-                    double factor = augmented[row, pivot];
-                    for (int column = pivot; column <= size; column++)
-                    {
-                        augmented[row, column] -= factor * augmented[pivot, column];
-                    }
-                }
-            }
-
-            for (int row = 0; row < size; row++)
-            {
-                solution[row] = augmented[row, size];
-            }
-
-            return true;
-        }
-    }
 }

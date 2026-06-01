@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PipelineResponse",
+  "type": "object",
+  "required": ["frame_id", "image_width", "image_height", "blocks"],
+  "properties": {
+    "frame_id": { "type": "string" },
+    "image_width": { "type": "integer" },
+    "image_height": { "type": "integer" },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "source_text", "translated_text", "bbox", "confidence", "type"],
+        "properties": {
+          "id": { "type": "string" },
+          "source_text": { "type": "string" },
+          "translated_text": { "type": "string" },
+          "bbox": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": { "type": "number" },
+            "description": "[x1, y1, x2, y2], origin top-left, in image pixel coordinates"
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "type": { "type": "string", "enum": ["text", "formula", "mixed"] },
+          "style": {
+            "type": "object",
+            "properties": {
+              "font_size": { "type": "integer" },
+              "background_alpha": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

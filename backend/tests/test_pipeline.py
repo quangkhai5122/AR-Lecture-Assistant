@@ -4,15 +4,19 @@ import base64
 import builtins
 import importlib.util
 import io
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 import requests
-from PIL import Image
+from jsonschema import Draft202012Validator
+from PIL import Image, ImageDraw
 
 from app import app
+from services.document_surface_service import DocumentSurfaceService
 from services.errors import PipelineError
+from services.ocr_service import OCRResult
 from services.ocr_service import OCRService
 from services.pipeline_service import PipelineService
 from services.translation_service import TranslationService
@@ -23,6 +27,25 @@ def _image_base64(width: int = 64, height: int = 32) -> str:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def _surface_image_base64(width: int = 320, height: int = 220) -> str:
+    image = Image.new("RGB", (width, height), color=(42, 46, 52))
+    draw = ImageDraw.Draw(image)
+    draw.polygon(
+        [(44, 32), (282, 24), (296, 190), (34, 198)],
+        fill=(246, 246, 242),
+        outline=(18, 18, 18),
+    )
+    draw.text((78, 76), "Shallow neural networks", fill=(30, 30, 30))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def _contract_schema(name: str) -> dict:
+    path = Path(__file__).resolve().parents[2] / "contracts" / name
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def test_pipeline_mock_returns_blocks():
@@ -40,6 +63,40 @@ def test_pipeline_mock_returns_blocks():
     assert "translated_text" in result["blocks"][0]
     assert result["document_surface"]["method"] == "ocr_bbox_union"
     assert len(result["document_surface"]["corners"]) == 8
+    assert "surface_detection" in result["latency_ms"]
+
+
+def test_pipeline_response_matches_contract_schema():
+    service = PipelineService()
+    result = service.process_frame({
+        "frame_id": "contract_test",
+        "image_base64": _image_base64(),
+        "target_language": "vi",
+        "mock": True,
+    })
+    validator = Draft202012Validator(_contract_schema("pipeline_response.schema.json"))
+
+    validator.validate(result)
+
+
+def test_sample_pipeline_output_matches_contract_schema():
+    sample_path = Path(__file__).resolve().parents[2] / "contracts" / "sample_pipeline_output.json"
+    sample = json.loads(sample_path.read_text(encoding="utf-8"))
+    validator = Draft202012Validator(_contract_schema("pipeline_response.schema.json"))
+
+    validator.validate(sample)
+
+
+def test_mock_pipeline_latency_budget_under_one_second():
+    service = PipelineService()
+    result = service.process_frame({
+        "frame_id": "latency_budget",
+        "image_base64": _image_base64(),
+        "target_language": "vi",
+        "mock": True,
+    })
+
+    assert result["latency_ms"]["total"] < 1000
 
 
 def test_decoded_image_dimensions_are_used_even_if_hints_differ():
@@ -74,6 +131,30 @@ def test_pipeline_endpoint_alias_accepts_mock_without_image():
     assert data["provider"] == {"ocr": "mock", "translation": "mock"}
     assert data["mock_used"] is True
     assert data["blocks"]
+
+
+def test_pipeline_endpoint_logs_slow_latency(monkeypatch):
+    calls = []
+
+    def fake_warning(message, *args, **kwargs):
+        calls.append((message, args, kwargs))
+
+    monkeypatch.setenv("PIPELINE_SLOW_MS", "0")
+    monkeypatch.setattr(app.logger, "warning", fake_warning)
+
+    client = app.test_client()
+    response = client.post("/pipeline/frame", json={
+        "frame_id": "latency_log",
+        "target_language": "vi",
+        "mock": True,
+        "image_width": 1280,
+        "image_height": 720,
+    })
+
+    assert response.status_code == 200
+    assert calls
+    assert calls[0][1][0] == "Slow pipeline"
+    assert calls[0][1][1] == "latency_log"
 
 
 def test_pipeline_frame_real_mode_requires_image():
@@ -199,6 +280,150 @@ def test_document_surface_estimation_from_ocr_boxes():
     assert surface["corners"][1] < 120
     assert surface["corners"][4] > 620
     assert surface["corners"][5] > 350
+
+
+def test_document_surface_detects_quadrilateral():
+    service = DocumentSurfaceService()
+    image = service.decode_image(_surface_image_base64())
+    surface = service.detect(image, [], 320, 220)
+
+    assert surface is not None
+    assert surface["method"] == "contour_quadrilateral"
+    assert surface["source"] == "image_edges"
+    assert len(surface["corners"]) == 8
+    assert 0 <= surface["confidence"] <= 1
+    assert surface["corners"][0] <= 48
+    assert surface["corners"][4] >= 286
+
+
+def test_document_surface_falls_back_to_ocr_union():
+    service = DocumentSurfaceService()
+    blank = Image.new("RGB", (320, 220), color=(255, 255, 255))
+    surface = service.detect(
+        blank,
+        [{"bbox": [90, 70, 210, 92]}, {"bbox": [94, 118, 240, 142]}],
+        320,
+        220,
+    )
+
+    assert surface is not None
+    assert surface["method"] == "ocr_bbox_union"
+    assert surface["source"] == "ocr_blocks"
+    assert 0 <= surface["confidence"] <= 1
+
+
+def test_document_surface_returns_none_for_blank_image():
+    service = DocumentSurfaceService()
+    blank = Image.new("RGB", (320, 220), color=(255, 255, 255))
+
+    assert service.detect(blank, [], 320, 220) is None
+
+
+def test_document_surface_crop_maps_ocr_boxes_to_original_image():
+    service = DocumentSurfaceService()
+    image = service.decode_image(_surface_image_base64())
+    surface = service.detect_from_image(image)
+    crop = service.crop_surface(image, surface)
+
+    assert crop is not None
+    assert crop.image.width < image.width
+    assert crop.image.height < image.height
+
+    mapped = service.map_blocks_from_crop(
+        [{"id": "ocr_1", "text": "Inside", "bbox": [10, 12, 80, 30], "confidence": 0.9}],
+        crop,
+    )
+
+    assert mapped[0]["bbox"][0] > crop.x_offset
+    assert mapped[0]["bbox"][1] > crop.y_offset
+    assert mapped[0]["bbox"][2] > mapped[0]["bbox"][0]
+    assert mapped[0]["bbox"][3] > mapped[0]["bbox"][1]
+    assert mapped[0]["bbox"][2] <= image.width
+    assert mapped[0]["bbox"][3] <= image.height
+
+
+def test_document_surface_crop_uses_quadrilateral_warp_mapping():
+    service = DocumentSurfaceService()
+    image = Image.new("RGB", (320, 220), color=(35, 35, 35))
+    surface = {
+        "corners": [40, 20, 250, 40, 280, 180, 30, 170],
+        "confidence": 0.9,
+        "method": "contour_quadrilateral",
+        "source": "test",
+    }
+    crop = service.crop_surface(image, surface)
+
+    assert crop is not None
+    assert crop.source_corners[0] == (40.0, 20.0)
+    assert crop.source_corners[1] == (250.0, 40.0)
+
+    mapped = service.map_blocks_from_crop(
+        [{"id": "ocr_1", "text": "Skewed", "bbox": [20, 15, 80, 35], "confidence": 0.9}],
+        crop,
+    )
+
+    assert mapped[0]["bbox"] != [crop.x_offset + 20, crop.y_offset + 15, crop.x_offset + 80, crop.y_offset + 35]
+    assert mapped[0]["bbox"][2] > mapped[0]["bbox"][0]
+    assert mapped[0]["bbox"][3] > mapped[0]["bbox"][1]
+
+
+def test_document_surface_detects_four_of_five_sample_slides():
+    service = DocumentSurfaceService()
+    sample_dir = Path(__file__).resolve().parents[2] / "samples" / "slides"
+    sample_paths = sorted(sample_dir.glob("slide_*.png"))
+
+    assert len(sample_paths) >= 5
+
+    detected = 0
+    for sample_path in sample_paths[:5]:
+        with Image.open(sample_path) as image:
+            surface = service.detect_from_image(image.convert("RGB"))
+        if surface is not None:
+            detected += 1
+
+    assert detected >= 4
+
+
+def test_pipeline_runs_real_ocr_on_surface_crop(monkeypatch):
+    service = PipelineService()
+    seen_sizes: list[tuple[int, int]] = []
+
+    def fake_recognize(
+        image_base64,
+        image_width=None,
+        image_height=None,
+        force_mock=True,
+        provider=None,
+    ):
+        image = service.document_surface_service.decode_image(image_base64)
+        seen_sizes.append(image.size)
+        return OCRResult(
+            blocks=[{"id": "ocr_1", "text": "Inside surface", "bbox": [8, 10, 120, 32], "confidence": 0.9}],
+            image_width=image.width,
+            image_height=image.height,
+            provider="fake",
+            mock_used=False,
+            warnings=[],
+        )
+
+    monkeypatch.setattr(service.ocr_service, "recognize", fake_recognize)
+
+    result = service.process_frame({
+        "frame_id": "surface_crop",
+        "image_base64": _surface_image_base64(),
+        "mock": False,
+        "ocr_provider": "tesseract",
+        "translation_provider": "mock",
+    })
+
+    assert seen_sizes
+    assert seen_sizes[0][0] < 320
+    assert seen_sizes[0][1] < 220
+    assert result["image_width"] == 320
+    assert result["image_height"] == 220
+    assert result["document_surface"]["method"] == "contour_quadrilateral"
+    assert result["blocks"][0]["bbox"][0] > 8
+    assert any("surface crop" in warning for warning in result["warnings"])
 
 
 def test_translate_endpoint_mock_keeps_ids_and_formula_type():

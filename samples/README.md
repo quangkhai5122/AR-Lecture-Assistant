@@ -1,9 +1,9 @@
 # Samples
 
-- `slides/slide_01.png`: ảnh slide mẫu dùng để test backend.
+- `slides/slide_01.png` đến `slides/slide_05.png`: bộ slide mẫu dùng để test backend document-surface detection, OCR pipeline và demo fallback.
 - `expected_outputs/`: lưu kết quả OCR/pipeline mong đợi khi nhóm test.
 
-Thành viên OCR nên thêm nhiều ảnh thật:
+Bộ ảnh hiện tại là sample kiểm thử tự tạo để có acceptance ổn định trong repo. Nhóm OCR vẫn nên bổ sung thêm ảnh thật trước demo:
 
 ```text
 slide_projector_blurry.jpg

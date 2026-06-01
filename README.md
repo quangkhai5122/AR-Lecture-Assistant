@@ -13,10 +13,13 @@ AR Lecture Assistant là một project Unity + Flask để dịch nội dung sli
 ## Tính năng đang có
 
 - Quét slide/bảng và đặt translation overlay lên nội dung OCR.
+- Demo mode mặc định giữ UI tối giản với luồng `Quét` / `Dịch` / `Dịch lại` / `Thử lại` và `Xóa`.
+- Ưu tiên capture từ AR camera raw để tránh đưa UI overlay vào ảnh OCR, fallback sang screenshot khi thiết bị không hỗ trợ CPU image.
+- Backend trả thêm `document_surface` để Unity map bbox OCR về bề mặt AR và vẽ outline surface.
 - Giữ nguyên công thức toán khi dịch.
 - Gộp block OCR theo dòng để overlay dễ đọc hơn.
 - Subtitle cho dòng dịch chính.
-- Nút `Hide VN` / `Show VN` để ẩn hoặc hiện toàn bộ bản dịch trên slide.
+- Nút `Hide VN` / `Show VN` để ẩn hoặc hiện toàn bộ bản dịch trên slide có thể bật lại bằng serialized flag cho chế độ nâng cao.
 - Speech transcript với các chế độ:
   - mock transcript trong Editor;
   - Google Speech-to-Text qua REST hoặc SDK;
@@ -25,6 +28,14 @@ AR Lecture Assistant là một project Unity + Flask để dịch nội dung sli
   - tóm tắt note bằng Gemini;
   - hỏi đáp trên một đoạn text đã chọn.
 - Chế độ mock và real provider cho backend.
+
+## Baseline demo mode
+
+- Scene chính: [`Assets/Scenes/MainScene.unity`](Assets/Scenes/MainScene.unity).
+- UI mặc định cho demo chỉ nên hiện hai control: nút chính (`Quét` / `Dịch` / `Dịch lại` / `Thử lại`) và `Xóa`.
+- Debug panel, freeze, transcript, provider controls và `Hide VN` được giữ như tính năng tùy chọn, nhưng ẩn trong demo mode mặc định.
+- AR flow mặc định: quét plane, lock surface, vẽ outline, capture frame, OCR/dịch qua backend, đặt label trong world space.
+- Checklist kiểm thử nằm ở [`docs/TESTING_CHECKLIST.md`](docs/TESTING_CHECKLIST.md), kịch bản demo nằm ở [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
 
 ## Cấu trúc thư mục
 

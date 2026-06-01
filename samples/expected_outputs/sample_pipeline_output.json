@@ -2,6 +2,21 @@
   "frame_id": "sample_001",
   "image_width": 1280,
   "image_height": 720,
+  "document_surface": {
+    "corners": [
+      153.8,
+      129.5,
+      1126.2,
+      129.5,
+      1126.2,
+      489.5,
+      153.8,
+      489.5
+    ],
+    "confidence": 0.62,
+    "method": "ocr_bbox_union",
+    "source": "ocr_blocks"
+  },
   "blocks": [
     {
       "id": "b1",
@@ -54,5 +69,17 @@
         "background_alpha": 0.68
       }
     }
-  ]
+  ],
+  "provider": {
+    "ocr": "mock",
+    "translation": "mock"
+  },
+  "mock_used": true,
+  "warnings": [],
+  "latency_ms": {
+    "surface_detection": 1.2,
+    "ocr": 12.4,
+    "translation": 8.1,
+    "total": 22.7
+  }
 }

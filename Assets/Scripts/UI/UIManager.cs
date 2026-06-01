@@ -13,12 +13,14 @@ public class UIManager : MonoBehaviour
     [SerializeField] private ARRaycastController raycastController;
     [SerializeField] private ARAnchorPlacer anchorPlacer;
     [SerializeField] private ARLabelPlacer labelPlacer;
+    [SerializeField] private ARSurfaceLockController surfaceLockController;
 
     [Header("=== UI Components ===")]
     [SerializeField] private StateManager stateManager;
     [SerializeField] private ButtonController buttonController;
     [SerializeField] private DebugPanelController debugPanel;
     [SerializeField] private SpeechTranscriptController speechTranscriptController;
+    [SerializeField] private bool showTranscriptControl = false;
 
     [Header("=== Services ===")]
     [SerializeField] private MockOCRService ocrService;
@@ -41,6 +43,7 @@ public class UIManager : MonoBehaviour
             polish = gameObject.AddComponent<ARLectureVisualPolish>();
         }
         polish.Apply();
+        EnsureSurfaceLockController();
         EnsureSpeechTranscriptController();
 
         // Bắt đầu ở trạng thái Idle
@@ -73,7 +76,32 @@ public class UIManager : MonoBehaviour
             speechTranscriptController = gameObject.AddComponent<SpeechTranscriptController>();
         }
 
-        speechTranscriptController.EnsureTranscriptUiVisible();
+        if (showTranscriptControl)
+        {
+            speechTranscriptController.EnsureTranscriptUiVisible();
+        }
+        else
+        {
+            speechTranscriptController.HideTranscriptUi();
+        }
+    }
+
+    private void EnsureSurfaceLockController()
+    {
+        if (surfaceLockController == null)
+        {
+            surfaceLockController = FindAnyObjectByType<ARSurfaceLockController>();
+        }
+
+        if (surfaceLockController == null)
+        {
+            surfaceLockController = gameObject.AddComponent<ARSurfaceLockController>();
+        }
+
+        surfaceLockController.SurfaceLocked -= OnSurfaceLocked;
+        surfaceLockController.SurfaceLocked += OnSurfaceLocked;
+        surfaceLockController.TrackingStateChanged -= OnSurfaceTrackingStateChanged;
+        surfaceLockController.TrackingStateChanged += OnSurfaceTrackingStateChanged;
     }
 
     private void OnDestroy()
@@ -82,6 +110,26 @@ public class UIManager : MonoBehaviour
         {
             arPlaneManager.planesChanged -= OnPlanesChanged;
         }
+
+        if (surfaceLockController != null)
+        {
+            surfaceLockController.SurfaceLocked -= OnSurfaceLocked;
+            surfaceLockController.TrackingStateChanged -= OnSurfaceTrackingStateChanged;
+        }
+    }
+
+    private void OnSurfaceLocked(Pose pose)
+    {
+        labelPlacer?.CachePlanePose(pose);
+        if (stateManager != null && stateManager.CurrentState == AppState.Scanning)
+        {
+            stateManager.SetState(AppState.PlaneDetected);
+        }
+    }
+
+    private void OnSurfaceTrackingStateChanged(ARSurfaceLockState trackingState)
+    {
+        debugPanel?.UpdateTrackingState(trackingState.ToString());
     }
 
     /// <summary>
@@ -115,6 +163,7 @@ public class UIManager : MonoBehaviour
                 Debug.Log($"[UIManager] Plane detected! Count: {args.added.Count}");
 
                 // Cache plane pose cho ARLabelPlacer — dùng khi camera di gần và raycast miss
+                surfaceLockController?.ObservePlaneFound(args.added[0]);
                 if (labelPlacer != null && raycastController != null)
                 {
                     if (raycastController.TryRaycastFromCenter(out UnityEngine.Pose hitPose))

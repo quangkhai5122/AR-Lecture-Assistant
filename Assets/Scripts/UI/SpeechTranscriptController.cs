@@ -36,7 +36,7 @@ public class SpeechTranscriptController : MonoBehaviour
     [SerializeField] private float maxUtteranceSeconds = 18f;
 
     [Header("Speech Recognition")]
-    [SerializeField] private bool showTranscriptUi = true;
+    [SerializeField] private bool showTranscriptUi = false;
     [SerializeField] private bool autoStartListening = false;
     [SerializeField] private string recognitionLanguage = "en-US";
     [SerializeField] private float rollingWindowSeconds = 45f;
@@ -128,6 +128,21 @@ public class SpeechTranscriptController : MonoBehaviour
         }
 
         BuildUi();
+    }
+
+    public void HideTranscriptUi()
+    {
+        showTranscriptUi = false;
+
+        if (modalRoot != null)
+        {
+            modalRoot.SetActive(false);
+        }
+
+        if (toggleButton != null)
+        {
+            toggleButton.gameObject.SetActive(false);
+        }
     }
 
     private void Update()

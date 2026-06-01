@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from services.document_surface_service import DocumentSurfaceService, SurfaceCrop
 from services.formula_service import FormulaService
 from services.ocr_service import OCRResult, OCRService
 from services.translation_service import TranslationResult, TranslationService
@@ -23,6 +24,7 @@ class PipelineService:
 
     def __init__(self):
         self.ocr_service = OCRService()
+        self.document_surface_service = DocumentSurfaceService()
         self.formula_service = FormulaService()
         self.translation_service = TranslationService()
 
@@ -31,15 +33,14 @@ class PipelineService:
         frame_id = payload.get("frame_id") or "frame_unknown"
         target_language = payload.get("target_language") or "vi"
         force_mock = bool(payload.get("mock", True))
+        surface_image = self.document_surface_service.decode_image(payload.get("image_base64") or "")
+
+        surface_start = time.perf_counter()
+        contour_surface = self.document_surface_service.detect_from_image(surface_image)
+        surface_ms = self._elapsed_ms(surface_start)
 
         ocr_start = time.perf_counter()
-        ocr_result = self.ocr_service.recognize(
-            image_base64=payload.get("image_base64") or "",
-            image_width=payload.get("image_width"),
-            image_height=payload.get("image_height"),
-            force_mock=force_mock,
-            provider=payload.get("ocr_provider"),
-        )
+        ocr_result = self._recognize_with_optional_surface_crop(payload, force_mock, surface_image, contour_surface)
         ocr_ms = self._elapsed_ms(ocr_start)
 
         translation_start = time.perf_counter()
@@ -51,6 +52,12 @@ class PipelineService:
         )
         translation_ms = self._elapsed_ms(translation_start)
 
+        document_surface = contour_surface or self.document_surface_service.estimate_from_ocr_blocks(
+            ocr_result.blocks,
+            ocr_result.image_width,
+            ocr_result.image_height,
+        )
+
         warnings = [*ocr_result.warnings, *translation_result.warnings]
         if translation_result.cache_hits:
             warnings.append(f"translation cache hits: {translation_result.cache_hits}")
@@ -59,11 +66,7 @@ class PipelineService:
             "frame_id": frame_id,
             "image_width": ocr_result.image_width,
             "image_height": ocr_result.image_height,
-            "document_surface": self.estimate_document_surface(
-                ocr_result.blocks,
-                ocr_result.image_width,
-                ocr_result.image_height,
-            ),
+            "document_surface": document_surface,
             "blocks": translated_blocks,
             "provider": {
                 "ocr": ocr_result.provider,
@@ -72,11 +75,70 @@ class PipelineService:
             "mock_used": ocr_result.mock_used or translation_result.mock_used,
             "warnings": warnings,
             "latency_ms": {
+                "surface_detection": surface_ms,
                 "ocr": ocr_ms,
                 "translation": translation_ms,
                 "total": self._elapsed_ms(start),
             },
         }
+
+    def _recognize_with_optional_surface_crop(
+        self,
+        payload: dict[str, Any],
+        force_mock: bool,
+        surface_image,
+        contour_surface: dict[str, Any] | None,
+    ) -> OCRResult:
+        if force_mock or surface_image is None or contour_surface is None:
+            return self.ocr_service.recognize(
+                image_base64=payload.get("image_base64") or "",
+                image_width=payload.get("image_width"),
+                image_height=payload.get("image_height"),
+                force_mock=force_mock,
+                provider=payload.get("ocr_provider"),
+            )
+
+        surface_crop = self.document_surface_service.crop_surface(surface_image, contour_surface)
+        if surface_crop is None:
+            return self.ocr_service.recognize(
+                image_base64=payload.get("image_base64") or "",
+                image_width=payload.get("image_width"),
+                image_height=payload.get("image_height"),
+                force_mock=force_mock,
+                provider=payload.get("ocr_provider"),
+            )
+
+        crop_result = self.ocr_service.recognize(
+            image_base64=self.document_surface_service.encode_image_base64(surface_crop.image),
+            image_width=surface_crop.image.width,
+            image_height=surface_crop.image.height,
+            force_mock=force_mock,
+            provider=payload.get("ocr_provider"),
+        )
+        if crop_result.blocks:
+            return self._map_crop_ocr_result(crop_result, surface_crop)
+
+        fallback_result = self.ocr_service.recognize(
+            image_base64=payload.get("image_base64") or "",
+            image_width=payload.get("image_width"),
+            image_height=payload.get("image_height"),
+            force_mock=force_mock,
+            provider=payload.get("ocr_provider"),
+        )
+        fallback_result.warnings.append("Surface crop OCR returned no blocks; retried on the original frame.")
+        return fallback_result
+
+    def _map_crop_ocr_result(self, crop_result: OCRResult, surface_crop: SurfaceCrop) -> OCRResult:
+        warnings = list(crop_result.warnings)
+        warnings.append("OCR ran on detected document surface crop.")
+        return OCRResult(
+            blocks=self.document_surface_service.map_blocks_from_crop(crop_result.blocks, surface_crop),
+            image_width=surface_crop.original_width,
+            image_height=surface_crop.original_height,
+            provider=crop_result.provider,
+            mock_used=crop_result.mock_used,
+            warnings=warnings,
+        )
 
     def translate_blocks_preserving_formula(
         self,
@@ -143,63 +205,7 @@ class PipelineService:
         image_width: int,
         image_height: int,
     ) -> dict[str, Any] | None:
-        """Estimate slide/board corners from OCR boxes.
-
-        The mobile client can project these corners onto the AR plane and place
-        labels by surface coordinates instead of raycasting every text center.
-        """
-
-        valid_boxes: list[list[float]] = []
-        for block in blocks:
-            bbox = block.get("bbox")
-            if not isinstance(bbox, list) or len(bbox) < 4:
-                continue
-
-            try:
-                x1, y1, x2, y2 = [float(value) for value in bbox[:4]]
-            except (TypeError, ValueError):
-                continue
-
-            if x2 <= x1 or y2 <= y1:
-                continue
-
-            valid_boxes.append([x1, y1, x2, y2])
-
-        if not valid_boxes or image_width <= 0 or image_height <= 0:
-            return None
-
-        x1 = min(box[0] for box in valid_boxes)
-        y1 = min(box[1] for box in valid_boxes)
-        x2 = max(box[2] for box in valid_boxes)
-        y2 = max(box[3] for box in valid_boxes)
-
-        content_width = max(1.0, x2 - x1)
-        content_height = max(1.0, y2 - y1)
-        pad_x = max(image_width * 0.04, content_width * 0.10)
-        pad_y = max(image_height * 0.05, content_height * 0.35)
-
-        x1 = self._clamp_float(x1 - pad_x, 0.0, float(image_width))
-        y1 = self._clamp_float(y1 - pad_y, 0.0, float(image_height))
-        x2 = self._clamp_float(x2 + pad_x, 0.0, float(image_width))
-        y2 = self._clamp_float(y2 + pad_y, 0.0, float(image_height))
-
-        if x2 <= x1 or y2 <= y1:
-            return None
-
-        coverage = ((x2 - x1) * (y2 - y1)) / max(1.0, float(image_width * image_height))
-        confidence = max(0.25, min(0.85, 0.35 + coverage))
-
-        return {
-            "corners": [
-                round(x1, 2), round(y1, 2),
-                round(x2, 2), round(y1, 2),
-                round(x2, 2), round(y2, 2),
-                round(x1, 2), round(y2, 2),
-            ],
-            "confidence": round(confidence, 3),
-            "method": "ocr_bbox_union",
-            "source": "ocr_blocks",
-        }
+        return self.document_surface_service.estimate_from_ocr_blocks(blocks, image_width, image_height)
 
     def translate_preserving_formula(
         self,
@@ -219,6 +225,3 @@ class PipelineService:
 
     def _elapsed_ms(self, start: float) -> float:
         return round((time.perf_counter() - start) * 1000, 2)
-
-    def _clamp_float(self, value: float, lower: float, upper: float) -> float:
-        return max(lower, min(upper, value))

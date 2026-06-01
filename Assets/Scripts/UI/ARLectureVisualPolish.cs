@@ -6,6 +6,7 @@ using UnityEngine.UI;
 public class ARLectureVisualPolish : MonoBehaviour
 {
     [SerializeField] private bool showAdvancedControls = false;
+    [SerializeField] private bool showOptionalDemoControls = false;
 
     private static readonly Color DockColor = new Color(0f, 0f, 0f, 0.70f);
     private static readonly Color PanelColor = new Color(0.02f, 0.02f, 0.02f, 0.84f);
@@ -340,6 +341,11 @@ public class ARLectureVisualPolish : MonoBehaviour
     private void ApplyNavigationMode()
     {
         SetObjectActive("TranslateButton", false);
+        if (!showOptionalDemoControls)
+        {
+            SetObjectActive("HideTranslationsButton", false);
+            SetObjectActive("TranscriptToggleButton", false);
+        }
         SetObjectActive("FreezeButton", false);
         SetObjectActive("ToggleDebugButton", false);
     }

@@ -1,0 +1,40 @@
+{
+  "frame_id": "sample_001",
+  "image_width": 1280,
+  "image_height": 720,
+  "blocks": [
+    {
+      "id": "b1",
+      "text": "Deep learning uses neural networks.",
+      "bbox": [
+        205,
+        180,
+        1075,
+        238
+      ],
+      "confidence": 0.98
+    },
+    {
+      "id": "b2",
+      "text": "The loss is L = -Σ y log(p).",
+      "bbox": [
+        205,
+        281,
+        1075,
+        338
+      ],
+      "confidence": 0.95
+    },
+    {
+      "id": "b3",
+      "text": "Gradient descent updates the model weights.",
+      "bbox": [
+        205,
+        382,
+        1075,
+        439
+      ],
+      "confidence": 0.96
+    }
+  ]
+}

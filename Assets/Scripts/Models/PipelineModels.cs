@@ -210,6 +210,7 @@ public class PipelineProvider
 [Serializable]
 public class PipelineLatency
 {
+    public float surface_detection;
     public float ocr;
     public float translation;
     public float total;

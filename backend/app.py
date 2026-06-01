@@ -107,6 +107,7 @@ def pipeline_frame():
     payload = _json_payload()
     _validate_frame_payload(payload)
     result = pipeline_service.process_frame(payload)
+    _log_pipeline_latency(result)
     return jsonify(result)
 
 
@@ -432,6 +433,41 @@ def _validate_image_payload(payload: dict[str, Any], required: bool) -> None:
 
     if "image_base64" in payload and not isinstance(payload["image_base64"], str):
         raise PipelineError("Field 'image_base64' must be a string.")
+
+
+def _log_pipeline_latency(result: dict[str, Any]) -> None:
+    latency = result.get("latency_ms") if isinstance(result, dict) else None
+    if not isinstance(latency, dict):
+        return
+
+    total_ms = _float_or_none(latency.get("total"))
+    if total_ms is None:
+        return
+
+    threshold_ms = _float_or_default(os.getenv("PIPELINE_SLOW_MS"), 4000.0)
+    log_method = app.logger.warning if total_ms >= threshold_ms else app.logger.info
+    prefix = "Slow pipeline" if total_ms >= threshold_ms else "Pipeline latency"
+    log_method(
+        "%s frame=%s total=%.2fms surface=%.2fms ocr=%.2fms translation=%.2fms",
+        prefix,
+        result.get("frame_id", ""),
+        total_ms,
+        _float_or_default(latency.get("surface_detection"), 0.0),
+        _float_or_default(latency.get("ocr"), 0.0),
+        _float_or_default(latency.get("translation"), 0.0),
+    )
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    parsed = _float_or_none(value)
+    return default if parsed is None else parsed
 
 
 if __name__ == "__main__":

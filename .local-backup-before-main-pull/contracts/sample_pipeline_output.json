@@ -1,0 +1,58 @@
+{
+  "frame_id": "sample_001",
+  "image_width": 1280,
+  "image_height": 720,
+  "blocks": [
+    {
+      "id": "b1",
+      "source_text": "Deep learning uses neural networks.",
+      "translated_text": "Học sâu sử dụng mạng nơ-ron.",
+      "bbox": [
+        205,
+        180,
+        1075,
+        238
+      ],
+      "confidence": 0.98,
+      "type": "text",
+      "style": {
+        "font_size": 38,
+        "background_alpha": 0.68
+      }
+    },
+    {
+      "id": "b2",
+      "source_text": "The loss is L = -Σ y log(p).",
+      "translated_text": "Hàm mất mát là L = -Σ y log(p).",
+      "bbox": [
+        205,
+        281,
+        1075,
+        338
+      ],
+      "confidence": 0.95,
+      "type": "mixed",
+      "style": {
+        "font_size": 38,
+        "background_alpha": 0.68
+      }
+    },
+    {
+      "id": "b3",
+      "source_text": "Gradient descent updates the model weights.",
+      "translated_text": "Hạ dốc gradient cập nhật trọng số mô hình.",
+      "bbox": [
+        205,
+        382,
+        1075,
+        439
+      ],
+      "confidence": 0.96,
+      "type": "text",
+      "style": {
+        "font_size": 38,
+        "background_alpha": 0.68
+      }
+    }
+  ]
+}
