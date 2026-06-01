@@ -24,6 +24,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private string llmProvider = "gemini";
     [SerializeField] private bool geminiMockMode = false;
+    [SerializeField] private bool enableTranslationSelectionActions = false;
 
     [Header("Label readability")]
     [SerializeField] private float minScreenSeparationPixels = 96f;
@@ -602,21 +603,24 @@ public class ARLabelPlacer : MonoBehaviour
 
         Image background = panel.AddComponent<Image>();
         background.color = lensOverlayBackgroundColor;
-        background.raycastTarget = true;
+        background.raycastTarget = enableTranslationSelectionActions;
 
-        Button button = panel.AddComponent<Button>();
-        button.targetGraphic = background;
-        ColorBlock colors = button.colors;
-        colors.normalColor = lensOverlayBackgroundColor;
-        colors.highlightedColor = Color.Lerp(lensOverlayBackgroundColor, Color.white, 0.10f);
-        colors.pressedColor = Color.Lerp(lensOverlayBackgroundColor, Color.black, 0.12f);
-        colors.selectedColor = colors.highlightedColor;
-        colors.disabledColor = lensOverlayBackgroundColor;
-        colors.colorMultiplier = 1f;
-        button.colors = colors;
+        if (enableTranslationSelectionActions)
+        {
+            Button button = panel.AddComponent<Button>();
+            button.targetGraphic = background;
+            ColorBlock colors = button.colors;
+            colors.normalColor = lensOverlayBackgroundColor;
+            colors.highlightedColor = Color.Lerp(lensOverlayBackgroundColor, Color.white, 0.10f);
+            colors.pressedColor = Color.Lerp(lensOverlayBackgroundColor, Color.black, 0.12f);
+            colors.selectedColor = colors.highlightedColor;
+            colors.disabledColor = lensOverlayBackgroundColor;
+            colors.colorMultiplier = 1f;
+            button.colors = colors;
 
-        string selectedText = group.Text.Trim();
-        button.onClick.AddListener(() => ShowTranslationActionMenu(selectedText, overlayCenter));
+            string selectedText = group.Text.Trim();
+            button.onClick.AddListener(() => ShowTranslationActionMenu(selectedText, overlayCenter));
+        }
 
         GameObject textObject = new GameObject("TranslatedText");
         textObject.transform.SetParent(panel.transform, false);
@@ -662,6 +666,7 @@ public class ARLabelPlacer : MonoBehaviour
 
     private void ShowTranslationActionMenu(string selectedText, Vector2 screenPoint)
     {
+        if (!enableTranslationSelectionActions) return;
         if (!translationsVisible || string.IsNullOrWhiteSpace(selectedText)) return;
 
         HideTranslationActionMenu();
@@ -719,18 +724,22 @@ public class ARLabelPlacer : MonoBehaviour
         RectTransform rect = buttonObject.AddComponent<RectTransform>();
         rect.sizeDelta = new Vector2(160f, 56f);
 
+        bool isCloseButton = name.ToLowerInvariant().Contains("close");
+        Color buttonColor = isCloseButton ? Color.white : Color.black;
+        Color textColor = isCloseButton ? Color.black : Color.white;
+
         Image image = buttonObject.AddComponent<Image>();
-        image.color = color;
+        image.color = buttonColor;
 
         Button button = buttonObject.AddComponent<Button>();
         button.targetGraphic = image;
 
         ColorBlock colors = button.colors;
-        colors.normalColor = color;
-        colors.highlightedColor = Color.Lerp(color, Color.white, 0.14f);
-        colors.pressedColor = Color.Lerp(color, Color.black, 0.14f);
+        colors.normalColor = buttonColor;
+        colors.highlightedColor = Color.Lerp(buttonColor, isCloseButton ? Color.black : Color.white, 0.14f);
+        colors.pressedColor = Color.Lerp(buttonColor, isCloseButton ? Color.black : Color.white, 0.22f);
         colors.selectedColor = colors.highlightedColor;
-        colors.disabledColor = new Color(0.16f, 0.17f, 0.2f, 0.54f);
+        colors.disabledColor = new Color(0.40f, 0.40f, 0.40f, 0.54f);
         colors.colorMultiplier = 1f;
         button.colors = colors;
 
@@ -747,7 +756,7 @@ public class ARLabelPlacer : MonoBehaviour
 
         TextMeshProUGUI text = labelObject.AddComponent<TextMeshProUGUI>();
         text.text = label;
-        text.color = Color.white;
+        text.color = textColor;
         text.fontStyle = FontStyles.Bold;
         text.fontSize = 20f;
         text.enableAutoSizing = true;

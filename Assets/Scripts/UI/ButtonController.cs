@@ -48,7 +48,7 @@ public class ButtonController : MonoBehaviour
 
     private void Awake()
     {
-        EnsureHideTranslationsButton();
+        ApplySimpleTwoButtonMode();
     }
 
     private void Start()
@@ -68,9 +68,9 @@ public class ButtonController : MonoBehaviour
             if (httpPipelineClient == null) httpPipelineClient = gameObject.AddComponent<HttpPipelineClient>();
         }
 
-        scanButton.onClick.AddListener(OnScanPressed);
-        translateButton.onClick.AddListener(OnTranslatePressed);
-        clearButton.onClick.AddListener(OnClearPressed);
+        if (scanButton != null) scanButton.onClick.AddListener(OnScanPressed);
+        if (translateButton != null) translateButton.onClick.AddListener(OnTranslatePressed);
+        if (clearButton != null) clearButton.onClick.AddListener(OnClearPressed);
         if (hideTranslationsButton != null)
         {
             hideTranslationsButton.onClick.AddListener(OnHideTranslationsPressed);
@@ -80,9 +80,11 @@ public class ButtonController : MonoBehaviour
             freezeButton.onClick.AddListener(OnFreezePressed);
             freezeButton.gameObject.SetActive(showAdvancedControls);
         }
-        stateManager.OnStateChanged.AddListener(OnStateChanged);
+        if (stateManager != null) stateManager.OnStateChanged.AddListener(OnStateChanged);
 
         UpdateButtonStates();
+        UpdatePrimaryActionLabel();
+        SetButtonLabel(clearButton, "Xóa");
         UpdateFreezeVisual();
         UpdateHideTranslationsVisual();
         debugPanel?.UpdateTrackingState("Idle");
@@ -101,11 +103,24 @@ public class ButtonController : MonoBehaviour
 
     private void OnScanPressed()
     {
+        if (stateManager != null &&
+            (stateManager.CurrentState == AppState.PlaneDetected ||
+             stateManager.CurrentState == AppState.Anchored))
+        {
+            OnTranslatePressed();
+            return;
+        }
+
+        StartScanning();
+    }
+
+    private void StartScanning()
+    {
         isFrozen = false;
         SetPlaneTrackingEnabled(true);
         UpdateFreezeVisual();
         debugPanel?.UpdateTrackingState("Scanning");
-        stateManager.SetState(AppState.Scanning);
+        stateManager?.SetState(AppState.Scanning);
         _ = CheckBackendHealthAsync();
     }
 
@@ -140,7 +155,7 @@ public class ButtonController : MonoBehaviour
             int placed = labelPlacer != null ? labelPlacer.PlacePipelineLabels(response) : 0;
             if (placed == 0)
             {
-                stateManager.SetError($"Đọc được {readableBlocks} block nhưng raycast miss. Scan lại plane.");
+                stateManager.SetError($"Đọc được {readableBlocks} block nhưng raycast miss. Hãy bấm Quét lại.");
                 return;
             }
 
@@ -197,7 +212,7 @@ public class ButtonController : MonoBehaviour
         var text = textObj.AddComponent<TMPro.TextMeshProUGUI>();
         text.text = errorText;
         text.fontSize = 24;
-        text.color = new Color(1f, 0.4f, 0.4f, 1f);
+        text.color = Color.white;
         text.alignment = TMPro.TextAlignmentOptions.TopLeft;
         text.enableWordWrapping = true;
         text.overflowMode = TMPro.TextOverflowModes.Overflow;
@@ -211,7 +226,7 @@ public class ButtonController : MonoBehaviour
         var btnObj = new GameObject("CloseBtn");
         btnObj.transform.SetParent(bgObj.transform, false);
         var btnImage = btnObj.AddComponent<UnityEngine.UI.Image>();
-        btnImage.color = new Color(0.9f, 0.2f, 0.2f, 1f);
+        btnImage.color = Color.white;
         var btnRect = btnObj.GetComponent<RectTransform>();
         btnRect.anchorMin = new Vector2(0.3f, 0.02f);
         btnRect.anchorMax = new Vector2(0.7f, 0.08f);
@@ -225,7 +240,7 @@ public class ButtonController : MonoBehaviour
         var btnText = btnTextObj.AddComponent<TMPro.TextMeshProUGUI>();
         btnText.text = "ĐÓNG";
         btnText.fontSize = 28;
-        btnText.color = Color.white;
+        btnText.color = Color.black;
         btnText.alignment = TMPro.TextAlignmentOptions.Center;
         var btnTextRect = btnTextObj.GetComponent<RectTransform>();
         btnTextRect.anchorMin = Vector2.zero;
@@ -387,10 +402,10 @@ public class ButtonController : MonoBehaviour
         debugPanel?.ClearAll();
         debugPanel?.UpdateTrackingState("Idle");
         isFrozen = false;
-        SetPlaneTrackingEnabled(true);
+        SetPlaneTrackingEnabled(false);
         UpdateFreezeVisual();
         UpdateHideTranslationsVisual();
-        stateManager.SetState(AppState.Idle);
+        stateManager?.SetState(AppState.Idle);
     }
 
     private void OnHideTranslationsPressed()
@@ -415,23 +430,37 @@ public class ButtonController : MonoBehaviour
         if (newState == AppState.Idle || newState == AppState.Error)
         {
             isFrozen = false;
-            SetPlaneTrackingEnabled(true);
+            SetPlaneTrackingEnabled(false);
             UpdateFreezeVisual();
         }
 
         debugPanel?.UpdateTrackingState(isFrozen ? "Frozen" : newState.ToString());
         UpdateHideTranslationsVisual();
         UpdateButtonStates();
+        UpdatePrimaryActionLabel();
     }
 
     private void UpdateButtonStates()
     {
         // Enable/disable buttons dựa trên state
+        if (stateManager == null) return;
+
         var state = stateManager.CurrentState;
-        scanButton.interactable = state != AppState.Translating;
-        translateButton.interactable =
-            (state == AppState.PlaneDetected || state == AppState.Anchored);
-        clearButton.interactable = (state == AppState.Anchored || state == AppState.Error);
+        if (scanButton != null)
+        {
+            scanButton.interactable = state != AppState.Translating;
+        }
+
+        if (translateButton != null)
+        {
+            translateButton.interactable = false;
+        }
+
+        if (clearButton != null)
+        {
+            clearButton.interactable = state != AppState.Idle && state != AppState.Translating;
+        }
+
         if (hideTranslationsButton != null)
         {
             bool hasTranslations = labelPlacer != null && labelPlacer.HasPlacedTranslations();
@@ -443,6 +472,50 @@ public class ButtonController : MonoBehaviour
                 showAdvancedControls &&
                 (state == AppState.Scanning || state == AppState.PlaneDetected || state == AppState.Anchored);
         }
+    }
+
+    private void UpdatePrimaryActionLabel()
+    {
+        if (scanButton == null || stateManager == null) return;
+
+        string label;
+        switch (stateManager.CurrentState)
+        {
+            case AppState.Scanning:
+                label = "Đang quét";
+                break;
+            case AppState.PlaneDetected:
+                label = "Dịch";
+                break;
+            case AppState.Translating:
+                label = "Đang dịch";
+                break;
+            case AppState.Anchored:
+                label = "Dịch lại";
+                break;
+            case AppState.Error:
+                label = "Thử lại";
+                break;
+            case AppState.Idle:
+            default:
+                label = "Quét";
+                break;
+        }
+
+        SetButtonLabel(scanButton, label);
+    }
+
+    private void ApplySimpleTwoButtonMode()
+    {
+        SetButtonObjectActive(translateButton, false);
+        SetButtonObjectActive(hideTranslationsButton, false);
+        SetButtonObjectActive(freezeButton, false);
+
+        SetNamedObjectActive("TranslateButton", false);
+        SetNamedObjectActive("HideTranslationsButton", false);
+        SetNamedObjectActive("FreezeButton", false);
+        SetNamedObjectActive("ToggleDebugButton", false);
+        SetNamedObjectActive("TranscriptToggleButton", false);
     }
 
     private void SetPlaneTrackingEnabled(bool enabled)
@@ -588,6 +661,17 @@ public class ButtonController : MonoBehaviour
         if (titleRect == null) return;
 
         titleRect.offsetMax = new Vector2(Mathf.Min(titleRect.offsetMax.x, -190f), titleRect.offsetMax.y);
+    }
+
+    private static void SetButtonObjectActive(Button button, bool active)
+    {
+        if (button != null) button.gameObject.SetActive(active);
+    }
+
+    private static void SetNamedObjectActive(string objectName, bool active)
+    {
+        GameObject obj = GameObject.Find(objectName);
+        if (obj != null) obj.SetActive(active);
     }
 
     private static void SetButtonLabel(Button button, string label)

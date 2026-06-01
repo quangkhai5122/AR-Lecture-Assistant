@@ -36,7 +36,8 @@ public class SpeechTranscriptController : MonoBehaviour
     [SerializeField] private float maxUtteranceSeconds = 18f;
 
     [Header("Speech Recognition")]
-    [SerializeField] private bool autoStartListening = true;
+    [SerializeField] private bool showTranscriptUi = false;
+    [SerializeField] private bool autoStartListening = false;
     [SerializeField] private string recognitionLanguage = "en-US";
     [SerializeField] private float rollingWindowSeconds = 45f;
     [SerializeField] private float uiRefreshIntervalSeconds = 0.15f;
@@ -101,7 +102,10 @@ public class SpeechTranscriptController : MonoBehaviour
     {
         ApplyLowLatencySpeechDefaults();
         notesService = new LectureNotesService(notesFileName);
-        BuildUi();
+        if (showTranscriptUi)
+        {
+            BuildUi();
+        }
 
         if (autoStartListening)
         {
@@ -1082,18 +1086,22 @@ public class SpeechTranscriptController : MonoBehaviour
         RectTransform rect = buttonObject.AddComponent<RectTransform>();
         rect.sizeDelta = new Vector2(180f, 58f);
 
+        bool isCloseButton = name.ToLowerInvariant().Contains("close");
+        Color buttonColor = isCloseButton ? Color.white : Color.black;
+        Color textColor = isCloseButton ? Color.black : Color.white;
+
         Image image = buttonObject.AddComponent<Image>();
-        image.color = color;
+        image.color = buttonColor;
 
         Button button = buttonObject.AddComponent<Button>();
         button.targetGraphic = image;
 
         ColorBlock colors = button.colors;
-        colors.normalColor = color;
-        colors.highlightedColor = Color.Lerp(color, Color.white, 0.12f);
-        colors.pressedColor = Color.Lerp(color, Color.black, 0.16f);
-        colors.selectedColor = Color.Lerp(color, Color.white, 0.08f);
-        colors.disabledColor = new Color(0.16f, 0.17f, 0.2f, 0.54f);
+        colors.normalColor = buttonColor;
+        colors.highlightedColor = Color.Lerp(buttonColor, isCloseButton ? Color.black : Color.white, 0.14f);
+        colors.pressedColor = Color.Lerp(buttonColor, isCloseButton ? Color.black : Color.white, 0.22f);
+        colors.selectedColor = colors.highlightedColor;
+        colors.disabledColor = new Color(0.40f, 0.40f, 0.40f, 0.54f);
         colors.colorMultiplier = 1f;
         button.colors = colors;
 
@@ -1107,7 +1115,7 @@ public class SpeechTranscriptController : MonoBehaviour
 
         TextMeshProUGUI text = labelObject.AddComponent<TextMeshProUGUI>();
         text.text = label;
-        text.color = Color.white;
+        text.color = textColor;
         text.fontSize = 22f;
         text.fontStyle = FontStyles.Bold;
         text.alignment = TextAlignmentOptions.Center;

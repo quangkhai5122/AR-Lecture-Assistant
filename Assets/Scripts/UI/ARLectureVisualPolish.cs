@@ -7,12 +7,12 @@ public class ARLectureVisualPolish : MonoBehaviour
 {
     [SerializeField] private bool showAdvancedControls = false;
 
-    private static readonly Color DockColor = new Color(0.025f, 0.030f, 0.040f, 0.70f);
-    private static readonly Color PanelColor = new Color(0.045f, 0.055f, 0.072f, 0.84f);
-    private static readonly Color PrimaryColor = new Color(0.13f, 0.70f, 0.92f, 0.96f);
-    private static readonly Color TranslateColor = new Color(0.38f, 0.34f, 0.95f, 0.96f);
-    private static readonly Color ClearColor = new Color(0.08f, 0.10f, 0.14f, 0.92f);
-    private static readonly Color SuccessColor = new Color(0.12f, 0.78f, 0.56f, 0.90f);
+    private static readonly Color DockColor = new Color(0f, 0f, 0f, 0.70f);
+    private static readonly Color PanelColor = new Color(0.02f, 0.02f, 0.02f, 0.84f);
+    private static readonly Color PrimaryColor = new Color(0f, 0f, 0f, 0.96f);
+    private static readonly Color TranslateColor = new Color(0f, 0f, 0f, 0.96f);
+    private static readonly Color ClearColor = new Color(1f, 1f, 1f, 0.96f);
+    private static readonly Color SuccessColor = new Color(0f, 0f, 0f, 0.72f);
     private static readonly Color TextColor = new Color(0.94f, 0.96f, 1f, 1f);
     private static readonly Color LensOverlayColor = new Color(0.92f, 0.92f, 0.88f, 0.78f);
     private static readonly Color LensTextColor = new Color(0.14f, 0.15f, 0.17f, 0.96f);
@@ -160,15 +160,15 @@ public class ARLectureVisualPolish : MonoBehaviour
 
             ColorBlock colors = button.colors;
             colors.normalColor = baseColor;
-            colors.highlightedColor = LerpToWhite(baseColor, 0.12f);
-            colors.pressedColor = LerpToBlack(baseColor, 0.18f);
-            colors.selectedColor = LerpToWhite(baseColor, 0.08f);
-            colors.disabledColor = new Color(0.18f, 0.2f, 0.24f, 0.52f);
+            colors.highlightedColor = ResolveButtonHighlightedColor(button.name);
+            colors.pressedColor = ResolveButtonPressedColor(button.name);
+            colors.selectedColor = colors.highlightedColor;
+            colors.disabledColor = ResolveButtonDisabledColor(button.name);
             colors.colorMultiplier = 1f;
             button.colors = colors;
 
             AddShadow(button.gameObject, new Color(0f, 0f, 0f, 0.24f), new Vector2(0f, -2f));
-            AddOutline(button.gameObject, new Color(1f, 1f, 1f, 0.08f));
+            AddOutline(button.gameObject, ResolveButtonOutlineColor(button.name));
 
             RectTransform rect = button.GetComponent<RectTransform>();
             if (rect != null)
@@ -191,7 +191,7 @@ public class ARLectureVisualPolish : MonoBehaviour
             foreach (TextMeshProUGUI text in button.GetComponentsInChildren<TextMeshProUGUI>(true))
             {
                 text.text = ResolveButtonLabel(button.name, text.text);
-                text.color = Color.white;
+                text.color = ResolveButtonTextColor(button.name);
                 text.fontSize = Mathf.Max(text.fontSize, 24f);
                 text.fontStyle = FontStyles.Bold;
                 text.alignment = TextAlignmentOptions.Center;
@@ -203,7 +203,7 @@ public class ARLectureVisualPolish : MonoBehaviour
             foreach (Text legacyText in button.GetComponentsInChildren<Text>(true))
             {
                 legacyText.text = ResolveButtonLabel(button.name, legacyText.text);
-                legacyText.color = Color.white;
+                legacyText.color = ResolveButtonTextColor(button.name);
                 legacyText.fontSize = Mathf.Max(legacyText.fontSize, 22);
                 legacyText.alignment = TextAnchor.MiddleCenter;
             }
@@ -339,8 +339,11 @@ public class ARLectureVisualPolish : MonoBehaviour
 
     private void ApplyNavigationMode()
     {
-        SetObjectActive("FreezeButton", showAdvancedControls);
-        SetObjectActive("ToggleDebugButton", showAdvancedControls);
+        SetObjectActive("TranslateButton", false);
+        SetObjectActive("HideTranslationsButton", false);
+        SetObjectActive("FreezeButton", false);
+        SetObjectActive("ToggleDebugButton", false);
+        SetObjectActive("TranscriptToggleButton", false);
     }
 
     private static void EnsureAccentBar(Transform parent)
@@ -368,22 +371,57 @@ public class ARLectureVisualPolish : MonoBehaviour
         if (lowerName.Contains("scan")) return PrimaryColor;
         if (lowerName.Contains("translate")) return TranslateColor;
         if (lowerName.Contains("clear")) return ClearColor;
-        if (lowerName.Contains("hide")) return new Color(0.18f, 0.24f, 0.31f, 0.96f);
-        if (lowerName.Contains("freeze")) return new Color(0.12f, 0.45f, 0.64f, 0.94f);
-        if (lowerName.Contains("debug")) return new Color(0.92f, 0.93f, 0.96f, 0.94f);
-        return new Color(0.12f, 0.14f, 0.18f, 0.94f);
+        return PrimaryColor;
     }
 
     private static string ResolveButtonLabel(string objectName, string currentText)
     {
         string lowerName = objectName.ToLowerInvariant();
-        if (lowerName.Contains("scan")) return "Scan";
-        if (lowerName.Contains("translate")) return "Translate";
-        if (lowerName.Contains("clear")) return "Clear";
-        if (lowerName.Contains("hide")) return "Hide VN";
-        if (lowerName.Contains("freeze")) return "Freeze";
+        if (lowerName.Contains("scan")) return "Quét";
+        if (lowerName.Contains("translate")) return "Dịch";
+        if (lowerName.Contains("clear")) return "Xóa";
+        if (lowerName.Contains("hide")) return "Ẩn";
+        if (lowerName.Contains("freeze")) return "Khóa";
         if (lowerName.Contains("debug")) return "Debug";
         return string.IsNullOrWhiteSpace(currentText) ? "Action" : currentText.Trim();
+    }
+
+    private static Color ResolveButtonTextColor(string objectName)
+    {
+        return IsWhiteButton(objectName) ? Color.black : Color.white;
+    }
+
+    private static Color ResolveButtonHighlightedColor(string objectName)
+    {
+        return IsWhiteButton(objectName)
+            ? new Color(0.92f, 0.92f, 0.92f, 0.96f)
+            : new Color(0.14f, 0.14f, 0.14f, 0.96f);
+    }
+
+    private static Color ResolveButtonPressedColor(string objectName)
+    {
+        return IsWhiteButton(objectName)
+            ? new Color(0.82f, 0.82f, 0.82f, 0.96f)
+            : new Color(0.24f, 0.24f, 0.24f, 0.96f);
+    }
+
+    private static Color ResolveButtonDisabledColor(string objectName)
+    {
+        return IsWhiteButton(objectName)
+            ? new Color(0.70f, 0.70f, 0.70f, 0.48f)
+            : new Color(0.08f, 0.08f, 0.08f, 0.42f);
+    }
+
+    private static Color ResolveButtonOutlineColor(string objectName)
+    {
+        return IsWhiteButton(objectName)
+            ? new Color(0f, 0f, 0f, 0.18f)
+            : new Color(1f, 1f, 1f, 0.12f);
+    }
+
+    private static bool IsWhiteButton(string objectName)
+    {
+        return objectName.ToLowerInvariant().Contains("clear");
     }
 
     private static bool IsMainActionButton(string objectName)
