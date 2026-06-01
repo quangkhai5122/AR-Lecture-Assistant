@@ -5,18 +5,26 @@ public class LabelBillboard : MonoBehaviour
 {
     private Camera arCamera;
 
-    void Start()
+    private void Start()
     {
         arCamera = Camera.main;
     }
 
-    void LateUpdate()
+    private void LateUpdate()
     {
+        if (arCamera == null)
+        {
+            arCamera = Camera.main;
+        }
+
         if (arCamera != null)
         {
-            // Xoay label để hướng về camera
-            transform.LookAt(
-                transform.position + arCamera.transform.forward);
+            // Match the AR camera orientation so the world-space canvas remains readable
+            // after the user looks away and comes back to the anchored label.
+            transform.rotation = Quaternion.LookRotation(
+                arCamera.transform.forward,
+                arCamera.transform.up
+            );
         }
     }
 }

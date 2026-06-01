@@ -38,7 +38,9 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private bool useGoogleLensOverlayDefaults = true;
     [SerializeField] private bool groupNearbyTextBlocks = false;
     [SerializeField] private bool googleLensSingleOverlay = false;
-    [SerializeField] private bool useScreenSpaceTranslationOverlay = true;
+    // Keep translations as world-space AR labels by default so they stay anchored
+    // when the camera looks away and returns to the board/slide.
+    [SerializeField] private bool useScreenSpaceTranslationOverlay = false;
     [SerializeField] private bool mergeSameLineTextBlocks = true;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.12f;
     [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.96f, 0.98f, 1f, 0.88f);
@@ -81,7 +83,6 @@ public class ARLabelPlacer : MonoBehaviour
             return;
         }
 
-        useScreenSpaceTranslationOverlay = true;
         mergeSameLineTextBlocks = true;
         groupNearbyTextBlocks = false;
         googleLensSingleOverlay = false;
@@ -1228,7 +1229,13 @@ public class ARLabelPlacer : MonoBehaviour
 
         GameObject label = Instantiate(fixedLabelPrefab, anchor.transform);
         label.transform.localPosition = Vector3.zero;
+        label.transform.localRotation = Quaternion.identity;
         ApplyDistanceScale(label, hitPose.position);
+
+        if (label.GetComponent<LabelBillboard>() == null)
+        {
+            label.AddComponent<LabelBillboard>();
+        }
 
         var textComp = label.GetComponentInChildren<TextMeshProUGUI>();
         if (textComp != null)
