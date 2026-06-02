@@ -26,7 +26,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private string llmProvider = "gemini";
     [SerializeField] private bool geminiMockMode = false;
-    [SerializeField] private bool enableTranslationSelectionActions = false;
+    [SerializeField] private bool enableTranslationSelectionActions = true;
     [SerializeField] private bool enableTapToFocusLabel = false;
     [SerializeField] private FocusedTranslationPanel focusedTranslationPanel;
 
@@ -1213,7 +1213,7 @@ public class ARLabelPlacer : MonoBehaviour
         GameObject canvasObject = new GameObject("GoogleLensTranslationOverlayCanvas");
         screenOverlayCanvas = canvasObject.AddComponent<Canvas>();
         screenOverlayCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        screenOverlayCanvas.sortingOrder = -1;
+        screenOverlayCanvas.sortingOrder = 80;
 
         CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
@@ -1989,7 +1989,7 @@ public class ARLabelPlacer : MonoBehaviour
         {
             ApplyDistanceScale(label, hitPose.position);
         }
-        AttachTapToFocus(label, textComp != null ? textComp.text : translatedText);
+        AttachWorldLabelInteraction(label, textComp != null ? textComp.text : translatedText);
         ApplyTranslationVisibility(label);
         if (animateWorldSpaceLabels && translationsVisible)
         {
@@ -2007,9 +2007,11 @@ public class ARLabelPlacer : MonoBehaviour
         return true;
     }
 
-    private void AttachTapToFocus(GameObject label, string translatedText)
+    private void AttachWorldLabelInteraction(GameObject label, string translatedText)
     {
-        if (!enableTapToFocusLabel || label == null || string.IsNullOrWhiteSpace(translatedText))
+        if ((!enableTranslationSelectionActions && !enableTapToFocusLabel) ||
+            label == null ||
+            string.IsNullOrWhiteSpace(translatedText))
         {
             return;
         }
@@ -2039,7 +2041,33 @@ public class ARLabelPlacer : MonoBehaviour
         targetImage.raycastTarget = true;
         button.targetGraphic = targetImage;
         string focusedText = translatedText.Trim();
-        button.onClick.AddListener(() => ResolveFocusedTranslationPanel().Show(focusedText));
+        button.onClick.AddListener(() =>
+        {
+            if (enableTranslationSelectionActions)
+            {
+                Vector2 menuPoint = ResolveWorldLabelScreenPoint(label, targetImage);
+                ShowTranslationActionMenu(focusedText, menuPoint);
+                return;
+            }
+
+            ResolveFocusedTranslationPanel().Show(focusedText);
+        });
+    }
+
+    private Vector2 ResolveWorldLabelScreenPoint(GameObject label, Image targetImage)
+    {
+        Camera camera = Camera.main;
+        if (camera != null)
+        {
+            Transform target = targetImage != null ? targetImage.transform : label.transform;
+            Vector3 screenPoint = camera.WorldToScreenPoint(target.position);
+            if (screenPoint.z > 0f)
+            {
+                return new Vector2(screenPoint.x, screenPoint.y);
+            }
+        }
+
+        return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
     }
 
     private Image ResolveTapTarget(GameObject label)
