@@ -8,7 +8,7 @@ using UnityEngine.XR.ARSubsystems;
 public class ARRaycastController : MonoBehaviour
 {
     [SerializeField] private ARRaycastManager raycastManager;
-    [SerializeField] private bool allowEstimatedPlaneFallback = false;
+    [SerializeField] private bool allowEstimatedPlaneFallback = true;
 
     private readonly List<ARRaycastHit> hits = new List<ARRaycastHit>();
 

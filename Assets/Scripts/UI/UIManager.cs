@@ -247,12 +247,35 @@ public class UIManager : MonoBehaviour
         {
             if (stateManager.CurrentState == AppState.Scanning)
             {
+                bool surfaceLocked = false;
+                if (surfaceLockController != null)
+                {
+                    foreach (ARPlane plane in args.added)
+                    {
+                        if (surfaceLockController.ObservePlaneFound(plane))
+                        {
+                            surfaceLocked = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!surfaceLocked)
+                {
+                    Debug.Log($"[UIManager] Plane(s) observed but no acceptable board surface locked. Count: {args.added.Count}");
+                    stateManager.SetStatusMessage("Dang tim mat bang/slide...");
+                    return;
+                }
+
                 stateManager.SetState(AppState.PlaneDetected);
                 Debug.Log($"[UIManager] Plane detected! Count: {args.added.Count}");
 
                 // Cache plane pose cho ARLabelPlacer — dùng khi camera di gần và raycast miss
-                surfaceLockController?.ObservePlaneFound(args.added[0]);
-                if (labelPlacer != null && raycastController != null)
+                if (labelPlacer != null && surfaceLockController != null && surfaceLockController.HasLockedSurface)
+                {
+                    labelPlacer.CachePlanePose(surfaceLockController.LockedPose);
+                }
+                else if (labelPlacer != null && raycastController != null)
                 {
                     if (raycastController.TryRaycastFromCenter(out UnityEngine.Pose hitPose))
                     {

@@ -3304,6 +3304,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   raycastManager: {fileID: 0}
+  allowEstimatedPlaneFallback: 1
 --- !u!114 &1716747710
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3380,10 +3381,12 @@ MonoBehaviour:
   labelPlacer: {fileID: 1716747712}
   outlineRenderer: {fileID: 1716747713}
   disablePlaneDetectionAfterLock: 1
-  requestedDetectionMode: 2
+  requestedDetectionMode: 3
   preferVerticalSurfaces: 1
   maxVerticalSurfaceNormalY: 0.35
   usePlaneRotationForLock: 1
+  allowEstimatedSurfaceFallback: 1
+  estimatedSurfaceFallbackDelaySeconds: 1.25
 --- !u!1 &1807505376
 GameObject:
   m_ObjectHideFlags: 0
