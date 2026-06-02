@@ -635,10 +635,6 @@ class OCRService:
         for page in pages:
             for block in self._safe_list(page.get("blocks") if isinstance(page, dict) else None):
                 for paragraph in self._safe_list(block.get("paragraphs") if isinstance(block, dict) else None):
-                    words: list[str] = []
-                    boxes: list[list[int]] = []
-                    confidences: list[float] = []
-
                     for word in self._safe_list(paragraph.get("words") if isinstance(paragraph, dict) else None):
                         text = self._google_word_text(word)
                         if not text:
@@ -650,19 +646,13 @@ class OCRService:
                         )
                         if bbox is None:
                             continue
-                        words.append(text)
-                        boxes.append(bbox)
-                        confidences.append(self._safe_float(word.get("confidence"), default=1.0))
 
-                    if not words or not boxes:
-                        continue
-
-                    blocks.append({
-                        "id": f"ocr_{len(blocks) + 1}",
-                        "text": " ".join(words),
-                        "bbox": self._union_bbox(boxes),
-                        "confidence": round(max(0.0, min(1.0, sum(confidences) / len(confidences))), 4),
-                    })
+                        blocks.append({
+                            "id": f"ocr_{len(blocks) + 1}",
+                            "text": text,
+                            "bbox": bbox,
+                            "confidence": round(max(0.0, min(1.0, self._safe_float(word.get("confidence"), default=1.0))), 4),
+                        })
 
         return blocks
 

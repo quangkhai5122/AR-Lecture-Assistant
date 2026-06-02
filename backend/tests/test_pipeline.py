@@ -307,6 +307,66 @@ def test_google_vision_ocr_provider_uses_api_key(monkeypatch):
     assert calls[0][2]["requests"][0]["features"][0]["type"] == "DOCUMENT_TEXT_DETECTION"
 
 
+def test_google_vision_full_text_splits_paragraph_into_lines(monkeypatch):
+    def word(text, x1, y1, x2, y2):
+        return {
+            "symbols": [{"text": text}],
+            "boundingBox": {
+                "vertices": [
+                    {"x": x1, "y": y1},
+                    {"x": x2, "y": y1},
+                    {"x": x2, "y": y2},
+                    {"x": x1, "y": y2},
+                ]
+            },
+            "confidence": 0.9,
+        }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "responses": [
+                    {
+                        "fullTextAnnotation": {
+                            "pages": [
+                                {
+                                    "blocks": [
+                                        {
+                                            "paragraphs": [
+                                                {
+                                                    "words": [
+                                                        word("First", 5, 10, 45, 30),
+                                                        word("line", 52, 10, 85, 30),
+                                                        word("Second", 5, 42, 65, 62),
+                                                        word("line", 72, 42, 105, 62),
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setenv("GOOGLE_VISION_API_KEY", "vision-key")
+    monkeypatch.setattr("services.ocr_service.requests.post", lambda *args, **kwargs: FakeResponse())
+
+    service = OCRService()
+    result = service.recognize(
+        image_base64=_image_base64(width=160, height=90),
+        force_mock=False,
+        provider="google",
+    )
+
+    assert [block["text"] for block in result.blocks] == ["First line", "Second line"]
+    assert [block["bbox"] for block in result.blocks] == [[5, 10, 85, 30], [5, 42, 105, 62]]
+
 def test_google_vision_ocr_requires_api_key(monkeypatch):
     for key in (
         "GOOGLE_VISION_API_KEY",
