@@ -3011,9 +3011,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 319be801f9d5447d9bd7d361fa5bc68f, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  backendBaseUrl: http://10.11.238.27:5000
+  backendBaseUrl: http://192.168.1.7:5000
   useDefaultBackendBaseUrl: 1
-  endpointUrl: http://10.11.238.27:5000/pipeline/frame
+  endpointUrl: http://192.168.1.7:5000/pipeline/frame
   pipelineFramePath: /pipeline/frame
   pipelineAliasPath: /pipeline
   ocrPath: /ocr

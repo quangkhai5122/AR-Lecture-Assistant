@@ -29,7 +29,7 @@ if ($Tesseract) {
 
 Write-Host "Demo backend: real OCR=tesseract, real translation=mymemory"
 Write-Host "Listening on http://0.0.0.0:5000"
-Write-Host "Unity Android scene is set to http://10.11.238.27:5000"
+Write-Host "Unity Android scene is set to http://192.168.1.7:5000"
 
 Push-Location $Backend
 try {
