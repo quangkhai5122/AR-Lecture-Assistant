@@ -13,7 +13,7 @@
     "image_height": { "type": "integer", "minimum": 1 },
     "ocr_provider": {
       "type": "string",
-      "enum": ["mock", "paddleocr", "tesseract"],
+      "enum": ["mock", "paddleocr", "tesseract", "google"],
       "description": "Optional per-request override. If omitted, backend uses OCR_PROVIDER env var in real mode."
     }
   },

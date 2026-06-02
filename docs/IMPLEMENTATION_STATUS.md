@@ -132,7 +132,7 @@ Evidence:
 ## Done With Manual Checklist Pending
 
 - Full-feature UI defaults are implemented by serialized flags and polish logic.
-- `ButtonController` defaults to backend mock pipeline with mock translation for deterministic no-key demos.
+- `ButtonController` defaults to the real backend pipeline with Google Vision OCR and Google Translate; mock mode remains available only when explicitly enabled.
 - The main scene now defaults to the five visible controls `Hide VN`, `Transcript`, `Quét`, `Dịch`, and `Xóa`; `Freeze` and debug remain available in code behind `showAdvancedControls`, and compact two-button demo still exists through `useCompactDemoControls` and related flags.
 - Friendly user-facing error messages are in `ButtonController`.
 - `Thử lại` preserves the current locked surface for backend/OCR/placement errors and retries translation immediately when tracking is still locked; if tracking is not locked anymore, it starts a fresh scan.

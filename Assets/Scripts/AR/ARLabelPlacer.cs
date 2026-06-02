@@ -26,7 +26,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private string llmProvider = "gemini";
     [SerializeField] private bool geminiMockMode = false;
-    [SerializeField] private bool enableTranslationSelectionActions = false;
+    [SerializeField] private bool enableTranslationSelectionActions = true;
     [SerializeField] private bool enableTapToFocusLabel = false;
     [SerializeField] private FocusedTranslationPanel focusedTranslationPanel;
 
@@ -38,23 +38,39 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private float minDistanceScale = 0.75f;
     [SerializeField] private float maxDistanceScale = 1.25f;
     [SerializeField] private float maxSurfaceLabelOffsetRatio = 0.08f;
-    [SerializeField] private float labelSurfaceOffsetMeters = 0.012f;
+    [SerializeField] private float labelSurfaceOffsetMeters = 0.0015f;
+    [SerializeField] private bool fitImageCoordinatesToCameraViewport = true;
+    [SerializeField] private bool preserveOcrAnchorPositions = true;
     [SerializeField] private bool faceCameraForReadability = true;
+    [SerializeField] private bool alignOcrLabelsToDetectedText = true;
+    [SerializeField] private bool fitOcrLabelsToPhysicalTextBounds = true;
+    [SerializeField] private bool preferDocumentSurfaceMapping = true;
+    [SerializeField] private bool allowCenterHomographyFallback = false;
+    [SerializeField] private bool preferLockedPlaneOcrProjection = false;
+    [SerializeField] private bool showBackendDocumentSurfaceOutline = false;
+    [SerializeField] private bool requireLockedSurfaceForOcrProjection = true;
+    [SerializeField] private bool allowLegacyPlacementFallbacks = false;
+    [SerializeField] private bool autoScreenSpaceFallbackWhenWorldPlacementFails = true;
+    [SerializeField] private float ocrBoundsPaddingRatio = 0.02f;
+    [SerializeField] private float minOcrLabelWidthMeters = 0.025f;
+    [SerializeField] private float minOcrLabelHeightMeters = 0.012f;
+    [SerializeField] private float maxOcrLabelWidthMeters = 1.40f;
+    [SerializeField] private float maxOcrLabelHeightMeters = 0.42f;
+    [SerializeField] private bool logAnchorPlacementDiagnostics = true;
     [SerializeField] private int maxLabelCharacters = 1200;
     [SerializeField] private int maxSubtitleCharacters = 220;
     [SerializeField] private bool useGoogleLensOverlayDefaults = true;
     [SerializeField] private bool groupNearbyTextBlocks = false;
     [SerializeField] private bool googleLensSingleOverlay = false;
-    // Keep translations as world-space AR labels by default so they stay anchored
-    // when the camera looks away and returns to the board/slide.
     [SerializeField] private bool useScreenSpaceTranslationOverlay = false;
     [SerializeField] private bool mergeSameLineTextBlocks = true;
+    [SerializeField] private bool allowFallbackPosePlacement = false;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.12f;
-    [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.96f, 0.98f, 1f, 0.88f);
-    [SerializeField] private Color lensOverlayTextColor = new Color(0.10f, 0.11f, 0.12f, 0.98f);
-    [SerializeField] private float lensOverlayWidthExpansion = 1.32f;
-    [SerializeField] private float lensOverlayHeightExpansion = 1.28f;
-    [SerializeField] private int lensOverlayMaxLines = 3;
+    [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.82f, 0.84f, 0.86f, 0.92f);
+    [SerializeField] private Color lensOverlayTextColor = new Color(0.09f, 0.10f, 0.11f, 0.98f);
+    [SerializeField] private float lensOverlayWidthExpansion = 1.14f;
+    [SerializeField] private float lensOverlayHeightExpansion = 1.08f;
+    [SerializeField] private int lensOverlayMaxLines = 2;
     [SerializeField] private bool animateWorldSpaceLabels = true;
 
     // Quản lý nhiều label cùng lúc
@@ -69,11 +85,17 @@ public class ARLabelPlacer : MonoBehaviour
     private TextMeshProUGUI geminiAnswerText;
     private LectureNotesService fallbackNotesService;
     private bool translationsVisible = true;
+    private static Sprite cachedLensOverlaySprite;
+    private static bool resolvedLensOverlaySprite;
 
     // Cache pose plane cuối cùng — dùng làm fallback khi raycast miss
     private Pose? cachedPlanePose = null;
 
     public bool AreTranslationsVisible => translationsVisible;
+    public bool UsesScreenSpaceTranslationOverlay => useScreenSpaceTranslationOverlay;
+    public string LastPlacementMode { get; private set; } = "none";
+    public int LastAnchoredLabelCount { get; private set; }
+    public string LastPlacementSummary { get; private set; } = "none";
 
     /// <summary>
     /// Gọi khi detect plane thành công — lưu pose để dùng khi camera di gần
@@ -94,9 +116,9 @@ public class ARLabelPlacer : MonoBehaviour
         mergeSameLineTextBlocks = true;
         groupNearbyTextBlocks = false;
         googleLensSingleOverlay = false;
-        lensOverlayWidthExpansion = Mathf.Max(lensOverlayWidthExpansion, 1.32f);
-        lensOverlayHeightExpansion = Mathf.Max(lensOverlayHeightExpansion, 1.28f);
-        lensOverlayMaxLines = Mathf.Clamp(lensOverlayMaxLines, 1, 3);
+        lensOverlayWidthExpansion = Mathf.Clamp(lensOverlayWidthExpansion, 1.08f, 1.16f);
+        lensOverlayHeightExpansion = Mathf.Clamp(lensOverlayHeightExpansion, 1.02f, 1.12f);
+        lensOverlayMaxLines = Mathf.Clamp(lensOverlayMaxLines, 1, 2);
     }
 
     /// <summary>
@@ -109,6 +131,22 @@ public class ARLabelPlacer : MonoBehaviour
     }
 
     public bool TryPlaceFixedLabel(string translatedText, Vector2 screenPos)
+    {
+        return TryPlaceFixedLabel(translatedText, screenPos, true);
+    }
+
+    private bool TryPlaceFixedLabel(string translatedText, Vector2 screenPos, bool allowOverlapNudge)
+    {
+        return TryPlaceFixedLabel(translatedText, screenPos, allowOverlapNudge, Vector2.zero, false);
+    }
+
+    private bool TryPlaceFixedLabel(
+        string translatedText,
+        Vector2 screenPos,
+        bool allowOverlapNudge,
+        Vector2 targetScreenSize,
+        bool alignToSurface
+    )
     {
         if (fixedLabelPrefab == null)
         {
@@ -134,7 +172,9 @@ public class ARLabelPlacer : MonoBehaviour
             }
         }
 
-        Vector2 resolvedScreenPos = ResolveNonOverlappingScreenPoint(screenPos, translatedText);
+        Vector2 resolvedScreenPos = allowOverlapNudge
+            ? ResolveNonOverlappingScreenPoint(screenPos, translatedText)
+            : screenPos;
         bool hit = raycastController.TryRaycastHit(resolvedScreenPos, out ARRaycastHit raycastHit);
         Vector2 placedScreenPos = resolvedScreenPos;
         if (!hit && resolvedScreenPos != screenPos)
@@ -145,7 +185,7 @@ public class ARLabelPlacer : MonoBehaviour
 
         if (hit)
         {
-            if (!CreateFixedLabel(translatedText, raycastHit)) return false;
+            if (!CreateFixedLabel(translatedText, raycastHit, targetScreenSize, alignToSurface)) return false;
             RegisterPlacedLabel(placedScreenPos, translatedText);
             return true;
         }
@@ -159,10 +199,16 @@ public class ARLabelPlacer : MonoBehaviour
 
         ApplyGoogleLensOverlayDefaults();
         ClearFixedLabels();
+        HideSubtitle();
+        LastPlacementMode = "none";
+        LastAnchoredLabelCount = 0;
+        LastPlacementSummary = "none";
 
         List<TranslationLabelGroup> labelGroups = BuildTranslationLabelGroups(response);
         if (useScreenSpaceTranslationOverlay)
         {
+            LastPlacementMode = "screen_overlay";
+            Debug.LogWarning("[ARLabelPlacer] Screen-space translation overlay is enabled; AR anchors are bypassed.");
             int overlayPlaced = 0;
             foreach (TranslationLabelGroup group in labelGroups)
             {
@@ -172,6 +218,8 @@ public class ARLabelPlacer : MonoBehaviour
                 }
             }
 
+            LastAnchoredLabelCount = 0;
+            LastPlacementSummary = $"screen_overlay={overlayPlaced}; anchors bypassed";
             return overlayPlaced;
         }
 
@@ -189,58 +237,204 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         // Pre-cache center raycast — fallback khi per-block raycast miss
-        bool hasCenterHit = raycastController.TryRaycastFromCenter(out Pose centerPose);
-        if (hasCenterHit)
+        Pose? lockedSurfacePose = surfaceLockController != null && surfaceLockController.HasLockedSurface
+            ? surfaceLockController.LockedPose
+            : null;
+
+        Pose centerPose = Pose.identity;
+        bool hasCenterHit = !lockedSurfacePose.HasValue &&
+            raycastController.TryRaycastFromCenter(out centerPose);
+        if (lockedSurfacePose.HasValue)
+        {
+            cachedPlanePose = lockedSurfacePose.Value;
+        }
+        else if (hasCenterHit)
         {
             cachedPlanePose = centerPose; // Lưu để dùng khi raycast miss sau này
         }
 
         // Xác định fallback pose (center hit hoặc cached từ lúc detect plane)
-        Pose? fallbackPose = hasCenterHit ? centerPose : cachedPlanePose;
+        Pose? fallbackPose = lockedSurfacePose ?? (hasCenterHit ? centerPose : cachedPlanePose);
         bool hasFallback = fallbackPose.HasValue;
+        bool canUseDocumentSurfaceMapping = preferDocumentSurfaceMapping;
+        bool canUseLegacyPlacementFallbacks = allowLegacyPlacementFallbacks;
+        bool shouldBuildSurfaceMapper = canUseDocumentSurfaceMapping || canUseLegacyPlacementFallbacks;
 
-        ARDocumentSurfaceMapper surfaceMapper = ARDocumentSurfaceMapper.TryCreate(
-            response,
-            raycastController,
-            BBoxPointToScreenPoint,
-            fallbackPose,
-            surfaceLockController != null ? surfaceLockController.LockedPlane : null
-        );
-        if (surfaceMapper != null)
+        ARDocumentSurfaceMapper surfaceMapper = null;
+        if (shouldBuildSurfaceMapper)
         {
-            surfaceLockController?.ShowDocumentSurface(surfaceMapper.WorldCorners);
+            surfaceMapper = ARDocumentSurfaceMapper.TryCreate(
+                response,
+                raycastController,
+                BBoxPointToScreenPoint,
+                fallbackPose,
+                surfaceLockController != null ? surfaceLockController.LockedPlane : null
+            );
+            if (surfaceMapper != null && showBackendDocumentSurfaceOutline)
+            {
+                surfaceLockController?.ShowDocumentSurface(surfaceMapper.WorldCorners);
+            }
         }
 
         int placed = 0;
+        int lockedPlaneBboxPlaced = 0;
+        int bboxSurfacePlaced = 0;
+        int centerHomographyPlaced = 0;
+        int raycastPlaced = 0;
+        int fallbackPlaced = 0;
+        int screenFallbackPlaced = 0;
+        int failedPlacement = 0;
+        List<TranslationLabelGroup> screenFallbackGroups = new List<TranslationLabelGroup>();
+
+        if (logAnchorPlacementDiagnostics)
+        {
+            Debug.Log(
+                $"[ARLabelPlacer] Anchor diagnostics start: groups={labelGroups.Count}, " +
+                $"responseImage={response.image_width}x{response.image_height}, " +
+                $"screen={Screen.width}x{Screen.height}, " +
+                $"surfaceMapper={(surfaceMapper != null)}, " +
+                $"documentSurfaceMapping={canUseDocumentSurfaceMapping}, " +
+                $"centerHomographyFallback={allowCenterHomographyFallback}, " +
+                $"lockedPlaneProjection={preferLockedPlaneOcrProjection}, " +
+                $"requireLockedSurface={requireLockedSurfaceForOcrProjection}, " +
+                $"legacyFallbacks={canUseLegacyPlacementFallbacks}, " +
+                $"alignBboxSurface={alignOcrLabelsToDetectedText}, " +
+                $"fallbackPose={hasFallback}, allowFallbackPosePlacement={allowFallbackPosePlacement}"
+            );
+        }
 
         for (int groupIndex = 0; groupIndex < labelGroups.Count; groupIndex++)
         {
             TranslationLabelGroup group = labelGroups[groupIndex];
             Vector2 screenPoint = group.ScreenPoint;
             string text = group.Text;
-            Vector2 resolvedScreenPoint = ResolveNonOverlappingScreenPoint(screenPoint, text);
+            Vector2 resolvedScreenPoint = preserveOcrAnchorPositions
+                ? screenPoint
+                : ResolveNonOverlappingScreenPoint(screenPoint, text);
             bool labelPlaced = false;
 
-            // Path A: SurfaceMapper (homography)
-            Vector2 surfaceImagePoint = ResolveSurfaceMappedImagePoint(group, resolvedScreenPoint, response);
-            if (surfaceMapper != null && surfaceMapper.TryMapImagePointToPose(surfaceImagePoint, out Pose surfacePose))
+            string lockedPlaneProjectionFailureReason = null;
+            // Path A: SurfaceMapper (homography). Prefer the whole OCR bbox, not only
+            // the center point, so the label can fit the detected text bounds.
+            Vector2 surfaceImagePoint = preserveOcrAnchorPositions
+                ? group.ImagePoint
+                : ResolveSurfaceMappedImagePoint(group, resolvedScreenPoint, response);
+            string bboxSurfaceFailureReason = null;
+            SurfaceLabelPlacement placement = null;
+            if (!canUseDocumentSurfaceMapping)
             {
-                labelPlaced = CreateFixedLabel(text, surfacePose, group.ScreenSize, surfaceMapper.Surface.Plane);
+                bboxSurfaceFailureReason = "document-surface-mapping-disabled";
+            }
+            else if (surfaceMapper == null)
+            {
+                bboxSurfaceFailureReason = "surface-mapper-missing";
+            }
+            else if (!alignOcrLabelsToDetectedText)
+            {
+                bboxSurfaceFailureReason = "bbox-surface-disabled";
+            }
+            else if (TryBuildSurfaceLabelPlacement(surfaceMapper, group, out placement, out bboxSurfaceFailureReason))
+            {
+                labelPlaced = CreateFixedLabel(text, placement, surfaceMapper.Surface.Plane);
                 if (labelPlaced)
                 {
+                    bboxSurfacePlaced++;
+                    RegisterPlacedLabel(group.ScreenPoint, text);
+                    LogAnchorPlacementRoute("bbox-surface", groupIndex, group, text, placement.Pose, placement.SizeMeters);
+                }
+                else if (string.IsNullOrEmpty(bboxSurfaceFailureReason))
+                {
+                    bboxSurfaceFailureReason = "create-label-failed-after-bbox-surface-map";
+                }
+            }
+
+            if (!labelPlaced &&
+                allowCenterHomographyFallback &&
+                canUseDocumentSurfaceMapping &&
+                surfaceMapper != null &&
+                surfaceMapper.TryMapImagePointToPose(surfaceImagePoint, out Pose surfacePose))
+            {
+                SurfaceLabelPlacement centerPlacement = new SurfaceLabelPlacement
+                {
+                    Pose = surfacePose,
+                    ScreenSize = group.ScreenSize,
+                    AlignToSurface = true,
+                    FitToPhysicalBounds = false
+                };
+                labelPlaced = CreateFixedLabel(text, centerPlacement, surfaceMapper.Surface.Plane);
+                if (labelPlaced)
+                {
+                    centerHomographyPlaced++;
                     Vector2 registeredPoint = ImagePointToScreenPoint(surfaceImagePoint, response.image_width, response.image_height);
                     RegisterPlacedLabel(registeredPoint, text);
+                    LogAnchorPlacementRoute(
+                        "center-homography",
+                        groupIndex,
+                        group,
+                        text,
+                        surfacePose,
+                        null,
+                        $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}"
+                    );
+                }
+            }
+
+            if (!labelPlaced &&
+                preferLockedPlaneOcrProjection &&
+                TryBuildLockedPlaneOcrPlacement(
+                    group,
+                    response,
+                    fallbackPose,
+                    out SurfaceLabelPlacement lockedPlacement,
+                    out ARPlane lockedPlane,
+                    out lockedPlaneProjectionFailureReason
+                ))
+            {
+                labelPlaced = CreateFixedLabel(text, lockedPlacement, lockedPlane);
+                if (labelPlaced)
+                {
+                    lockedPlaneBboxPlaced++;
+                    RegisterPlacedLabel(group.ScreenPoint, text);
+                    LogAnchorPlacementRoute(
+                        "locked-plane-bbox",
+                        groupIndex,
+                        group,
+                        text,
+                        lockedPlacement.Pose,
+                        lockedPlacement.SizeMeters,
+                        $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}"
+                    );
+                }
+                else if (string.IsNullOrEmpty(lockedPlaneProjectionFailureReason))
+                {
+                    lockedPlaneProjectionFailureReason = "create-label-failed-after-locked-plane-projection";
                 }
             }
 
             // Path B: Per-block raycast
-            if (!labelPlaced && TryPlaceFixedLabel(text, resolvedScreenPoint))
+            if (!labelPlaced && canUseLegacyPlacementFallbacks && TryPlaceFixedLabel(
+                text,
+                screenPoint,
+                !preserveOcrAnchorPositions,
+                group.ScreenSize,
+                true
+            ))
             {
                 labelPlaced = true;
+                raycastPlaced++;
+                LogAnchorPlacementRoute(
+                    "raycast",
+                    groupIndex,
+                    group,
+                    text,
+                    null,
+                    null,
+                    $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}"
+                );
             }
 
             // Path C+D: Fallback — dùng center raycast hoặc cached plane pose
-            if (!labelPlaced && hasFallback)
+            if (!labelPlaced && canUseLegacyPlacementFallbacks && hasFallback && allowFallbackPosePlacement)
             {
                 Pose basePose = fallbackPose.Value;
 
@@ -259,15 +453,78 @@ public class ARLabelPlacer : MonoBehaviour
                 labelPlaced = CreateFixedLabel(text, offsetPose, group.ScreenSize);
                 if (labelPlaced)
                 {
+                    fallbackPlaced++;
                     RegisterPlacedLabel(resolvedScreenPoint, text);
-                    Debug.Log($"[ARLabelPlacer] Group {groupIndex} placed via fallback pose");
+                    LogAnchorPlacementRoute(
+                        "fallback-pose",
+                        groupIndex,
+                        group,
+                        text,
+                        offsetPose,
+                        null,
+                        $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}, normalized=({normalizedX:F3},{normalizedY:F3})"
+                    );
                 }
             }
 
-            if (labelPlaced) placed++;
+            if (labelPlaced)
+            {
+                placed++;
+            }
+            else
+            {
+                failedPlacement++;
+                if (autoScreenSpaceFallbackWhenWorldPlacementFails)
+                {
+                    screenFallbackGroups.Add(group);
+                }
+                LogAnchorPlacementRoute(
+                    "not-placed",
+                    groupIndex,
+                    group,
+                    text,
+                    null,
+                    null,
+                    $"lockedPlaneFail={lockedPlaneProjectionFailureReason ?? "not-attempted"}, " +
+                    $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}, " +
+                    $"fallbackPose={hasFallback}, allowFallbackPosePlacement={allowFallbackPosePlacement}, " +
+                    $"legacyFallbacks={canUseLegacyPlacementFallbacks}"
+                );
+            }
         }
 
-        return placed;
+        if (autoScreenSpaceFallbackWhenWorldPlacementFails && screenFallbackGroups.Count > 0)
+        {
+            foreach (TranslationLabelGroup group in screenFallbackGroups)
+            {
+                if (CreateScreenOverlayLabel(group))
+                {
+                    screenFallbackPlaced++;
+                }
+            }
+
+            if (screenFallbackPlaced > 0)
+            {
+                Debug.LogWarning(
+                    $"[ARLabelPlacer] Used screen-space fallback for {screenFallbackPlaced} translation label(s) " +
+                    "because AR document/world placement failed for those blocks."
+                );
+            }
+        }
+
+        LastAnchoredLabelCount = placed;
+        LastPlacementMode = placed > 0
+            ? (screenFallbackPlaced > 0 ? "world_anchor+screen_overlay_fallback" : "world_anchor")
+            : (screenFallbackPlaced > 0 ? "screen_overlay_fallback" : "none");
+        LastPlacementSummary =
+            $"locked-plane-bbox={lockedPlaneBboxPlaced}, bbox-surface={bboxSurfacePlaced}, center-homography={centerHomographyPlaced}, " +
+            $"raycast={raycastPlaced}, fallback={fallbackPlaced}, screen-fallback={screenFallbackPlaced}, failed={failedPlacement}";
+        Debug.Log(
+            $"[ARLabelPlacer] Placed {placed} world-space anchored translation label(s), " +
+            $"{screenFallbackPlaced} screen fallback label(s). " +
+            $"routes: {LastPlacementSummary}"
+        );
+        return placed + screenFallbackPlaced;
     }
 
     public int CountReadableBlocks(PipelineResponse response)
@@ -333,14 +590,17 @@ public class ARLabelPlacer : MonoBehaviour
 
     private Vector2 ImagePointToScreenPoint(Vector2 imagePoint, int imageWidth, int imageHeight)
     {
-        float screenX = imageWidth > 0
-            ? imagePoint.x / imageWidth * Screen.width
-            : Screen.width * 0.5f;
+        if (imageWidth <= 0 || imageHeight <= 0)
+        {
+            return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+        }
+
+        ImageScreenMapping mapping = ResolveImageScreenMapping(imageWidth, imageHeight);
+        float screenX = imagePoint.x * mapping.Scale + mapping.Offset.x;
 
         // Backend trả bbox theo gốc top-left; Unity screen point dùng gốc bottom-left.
-        float screenY = imageHeight > 0
-            ? Screen.height - (imagePoint.y / imageHeight * Screen.height)
-            : Screen.height * 0.5f;
+        float topLeftY = imagePoint.y * mapping.Scale + mapping.Offset.y;
+        float screenY = Screen.height - topLeftY;
 
         return new Vector2(screenX, screenY);
     }
@@ -352,9 +612,13 @@ public class ARLabelPlacer : MonoBehaviour
             return Vector2.zero;
         }
 
-        float imageX = screenPoint.x / Mathf.Max(1f, Screen.width) * imageWidth;
-        float imageY = (Screen.height - screenPoint.y) / Mathf.Max(1f, Screen.height) * imageHeight;
-        return new Vector2(imageX, imageY);
+        ImageScreenMapping mapping = ResolveImageScreenMapping(imageWidth, imageHeight);
+        float imageX = (screenPoint.x - mapping.Offset.x) / mapping.Scale;
+        float imageY = ((Screen.height - screenPoint.y) - mapping.Offset.y) / mapping.Scale;
+        return new Vector2(
+            Mathf.Clamp(imageX, 0f, imageWidth),
+            Mathf.Clamp(imageY, 0f, imageHeight)
+        );
     }
 
     private Vector2 ResolveSurfaceMappedImagePoint(
@@ -380,6 +644,264 @@ public class ARLabelPlacer : MonoBehaviour
             group.ImagePoint.x + Mathf.Clamp(requestedImagePoint.x - group.ImagePoint.x, -maxOffsetX, maxOffsetX),
             group.ImagePoint.y + Mathf.Clamp(requestedImagePoint.y - group.ImagePoint.y, -maxOffsetY, maxOffsetY)
         );
+    }
+
+    private bool TryBuildSurfaceLabelPlacement(
+        ARDocumentSurfaceMapper surfaceMapper,
+        TranslationLabelGroup group,
+        out SurfaceLabelPlacement placement,
+        out string failureReason
+    )
+    {
+        placement = null;
+        failureReason = null;
+        if (surfaceMapper == null || group == null || group.BBox.width <= 0f || group.BBox.height <= 0f)
+        {
+            failureReason = "invalid-bbox-or-surface";
+            return false;
+        }
+
+        if (!surfaceMapper.TryMapImageRectToSurfacePose(group.BBox, out Pose pose, out Vector2 rawSizeMeters))
+        {
+            failureReason = "rect-to-surface-map-failed";
+            return false;
+        }
+
+        float paddingMultiplier = 1f + Mathf.Max(0f, ocrBoundsPaddingRatio) * 2f;
+        Vector2 fittedSizeMeters = new Vector2(
+            Mathf.Clamp(rawSizeMeters.x * paddingMultiplier, minOcrLabelWidthMeters, maxOcrLabelWidthMeters),
+            Mathf.Clamp(rawSizeMeters.y * paddingMultiplier, minOcrLabelHeightMeters, maxOcrLabelHeightMeters)
+        );
+
+        placement = new SurfaceLabelPlacement
+        {
+            Pose = pose,
+            ScreenSize = group.ScreenSize,
+            SizeMeters = fittedSizeMeters,
+            AlignToSurface = true,
+            FitToPhysicalBounds = fitOcrLabelsToPhysicalTextBounds
+        };
+        return true;
+    }
+
+    private bool TryBuildLockedPlaneOcrPlacement(
+        TranslationLabelGroup group,
+        PipelineResponse response,
+        Pose? fallbackPose,
+        out SurfaceLabelPlacement placement,
+        out ARPlane plane,
+        out string failureReason
+    )
+    {
+        placement = null;
+        plane = null;
+        failureReason = null;
+
+        if (group == null || response == null || group.BBox.width <= 0f || group.BBox.height <= 0f)
+        {
+            failureReason = "invalid-group-or-response";
+            return false;
+        }
+
+        Camera camera = Camera.main;
+        if (camera == null)
+        {
+            failureReason = "camera-main-missing";
+            return false;
+        }
+
+        Pose planePose;
+        if (surfaceLockController != null && surfaceLockController.HasLockedSurface)
+        {
+            plane = surfaceLockController.LockedPlane;
+            planePose = plane != null
+                ? new Pose(plane.transform.position, plane.transform.rotation)
+                : surfaceLockController.LockedPose;
+        }
+        else if (requireLockedSurfaceForOcrProjection)
+        {
+            failureReason = "locked-surface-required";
+            return false;
+        }
+        else if (fallbackPose.HasValue)
+        {
+            planePose = fallbackPose.Value;
+        }
+        else if (cachedPlanePose.HasValue)
+        {
+            planePose = cachedPlanePose.Value;
+        }
+        else
+        {
+            failureReason = "locked-plane-missing";
+            return false;
+        }
+
+        Vector2[] screenCorners =
+        {
+            ImagePointToScreenPoint(new Vector2(group.BBox.xMin, group.BBox.yMin), response.image_width, response.image_height),
+            ImagePointToScreenPoint(new Vector2(group.BBox.xMax, group.BBox.yMin), response.image_width, response.image_height),
+            ImagePointToScreenPoint(new Vector2(group.BBox.xMax, group.BBox.yMax), response.image_width, response.image_height),
+            ImagePointToScreenPoint(new Vector2(group.BBox.xMin, group.BBox.yMax), response.image_width, response.image_height)
+        };
+
+        Vector3 planeNormal = planePose.rotation * Vector3.up;
+        if (planeNormal.sqrMagnitude < 0.000001f)
+        {
+            failureReason = "invalid-plane-normal";
+            return false;
+        }
+        planeNormal.Normalize();
+
+        Vector3[] worldCorners = new Vector3[4];
+        for (int i = 0; i < screenCorners.Length; i++)
+        {
+            if (!TryProjectScreenPointToPlane(camera, screenCorners[i], planePose.position, planeNormal, out worldCorners[i]))
+            {
+                failureReason = "screen-corner-plane-projection-failed";
+                return false;
+            }
+        }
+
+        Vector3 center = (worldCorners[0] + worldCorners[1] + worldCorners[2] + worldCorners[3]) * 0.25f;
+        if (Vector3.Dot(planeNormal, camera.transform.position - center) < 0f)
+        {
+            planeNormal = -planeNormal;
+        }
+
+        Vector3 right = ((worldCorners[1] - worldCorners[0]) + (worldCorners[2] - worldCorners[3])) * 0.5f;
+        Vector3 down = ((worldCorners[3] - worldCorners[0]) + (worldCorners[2] - worldCorners[1])) * 0.5f;
+        right = Vector3.ProjectOnPlane(right, planeNormal);
+        down = Vector3.ProjectOnPlane(down, planeNormal);
+        if (right.sqrMagnitude < 0.000001f || down.sqrMagnitude < 0.000001f)
+        {
+            failureReason = "projected-ocr-rect-degenerate";
+            return false;
+        }
+
+        float widthMeters = Mathf.Max((worldCorners[1] - worldCorners[0]).magnitude, (worldCorners[2] - worldCorners[3]).magnitude);
+        float heightMeters = Mathf.Max((worldCorners[3] - worldCorners[0]).magnitude, (worldCorners[2] - worldCorners[1]).magnitude);
+        if (widthMeters <= 0.0001f || heightMeters <= 0.0001f)
+        {
+            failureReason = "projected-ocr-rect-too-small";
+            return false;
+        }
+
+        down.Normalize();
+        Quaternion rotation = Quaternion.LookRotation(-down, planeNormal);
+        float paddingMultiplier = 1f + Mathf.Max(0f, ocrBoundsPaddingRatio);
+        Vector2 fittedSizeMeters = new Vector2(
+            Mathf.Clamp(widthMeters * paddingMultiplier, minOcrLabelWidthMeters, maxOcrLabelWidthMeters),
+            Mathf.Clamp(heightMeters * paddingMultiplier, minOcrLabelHeightMeters, maxOcrLabelHeightMeters)
+        );
+
+        placement = new SurfaceLabelPlacement
+        {
+            Pose = new Pose(center, rotation),
+            ScreenSize = group.ScreenSize,
+            SizeMeters = fittedSizeMeters,
+            AlignToSurface = true,
+            FitToPhysicalBounds = true
+        };
+        return true;
+    }
+
+    private static bool TryProjectScreenPointToPlane(
+        Camera camera,
+        Vector2 screenPoint,
+        Vector3 planePoint,
+        Vector3 planeNormal,
+        out Vector3 worldPoint
+    )
+    {
+        worldPoint = Vector3.zero;
+        if (camera == null || planeNormal.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+
+        Ray ray = camera.ScreenPointToRay(screenPoint);
+        float denominator = Vector3.Dot(planeNormal, ray.direction);
+        if (Mathf.Abs(denominator) < 0.0001f)
+        {
+            return false;
+        }
+
+        float distance = Vector3.Dot(planePoint - ray.origin, planeNormal) / denominator;
+        if (distance <= 0f)
+        {
+            return false;
+        }
+
+        worldPoint = ray.origin + ray.direction * distance;
+        return true;
+    }
+
+    private void LogAnchorPlacementRoute(
+        string route,
+        int groupIndex,
+        TranslationLabelGroup group,
+        string text,
+        Pose? pose = null,
+        Vector2? sizeMeters = null,
+        string detail = null
+    )
+    {
+        if (!logAnchorPlacementDiagnostics)
+        {
+            return;
+        }
+
+        string preview = BuildLogTextPreview(text);
+        string poseInfo = pose.HasValue
+            ? $", pose={FormatVector3(pose.Value.position)}"
+            : string.Empty;
+        string sizeInfo = sizeMeters.HasValue
+            ? $", sizeMeters={FormatVector2(sizeMeters.Value)}"
+            : string.Empty;
+        string detailInfo = string.IsNullOrEmpty(detail)
+            ? string.Empty
+            : $", {detail}";
+        string message =
+            $"[ARLabelPlacer] Anchor route={route} group={groupIndex}, " +
+            $"bbox={FormatRect(group.BBox)}, imagePoint={FormatVector2(group.ImagePoint)}, " +
+            $"screenPoint={FormatVector2(group.ScreenPoint)}, screenSize={FormatVector2(group.ScreenSize)}" +
+            $"{poseInfo}{sizeInfo}{detailInfo}, text=\"{preview}\"";
+
+        if (route == "not-placed" || route == "fallback-pose")
+        {
+            Debug.LogWarning(message);
+        }
+        else
+        {
+            Debug.Log(message);
+        }
+    }
+
+    private static string BuildLogTextPreview(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        string compact = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return compact.Length <= 48 ? compact : compact.Substring(0, 48) + "...";
+    }
+
+    private static string FormatRect(Rect rect)
+    {
+        return $"({rect.x:F1},{rect.y:F1},{rect.width:F1},{rect.height:F1})";
+    }
+
+    private static string FormatVector2(Vector2 value)
+    {
+        return $"({value.x:F1},{value.y:F1})";
+    }
+
+    private static string FormatVector3(Vector3 value)
+    {
+        return $"({value.x:F3},{value.y:F3},{value.z:F3})";
     }
 
     private List<TranslationLabelGroup> BuildTranslationLabelGroups(PipelineResponse response)
@@ -615,16 +1137,38 @@ public class ARLabelPlacer : MonoBehaviour
         );
     }
 
-    private static Vector2 ImageRectToScreenSize(Rect imageRect, int imageWidth, int imageHeight)
+    private Vector2 ImageRectToScreenSize(Rect imageRect, int imageWidth, int imageHeight)
     {
         if (imageWidth <= 0 || imageHeight <= 0)
         {
             return new Vector2(320f, 120f);
         }
 
+        ImageScreenMapping mapping = ResolveImageScreenMapping(imageWidth, imageHeight);
         return new Vector2(
-            Mathf.Max(72f, imageRect.width / imageWidth * Screen.width),
-            Mathf.Max(36f, imageRect.height / imageHeight * Screen.height)
+            Mathf.Max(72f, imageRect.width * mapping.Scale),
+            Mathf.Max(36f, imageRect.height * mapping.Scale)
+        );
+    }
+
+    private ImageScreenMapping ResolveImageScreenMapping(int imageWidth, int imageHeight)
+    {
+        float screenWidth = Mathf.Max(1f, Screen.width);
+        float screenHeight = Mathf.Max(1f, Screen.height);
+        float scaleX = screenWidth / Mathf.Max(1f, imageWidth);
+        float scaleY = screenHeight / Mathf.Max(1f, imageHeight);
+        float scale = fitImageCoordinatesToCameraViewport
+            ? Mathf.Max(scaleX, scaleY)
+            : scaleX;
+
+        float displayedWidth = imageWidth * scale;
+        float displayedHeight = imageHeight * scale;
+        return new ImageScreenMapping(
+            scale,
+            new Vector2(
+                (screenWidth - displayedWidth) * 0.5f,
+                (screenHeight - displayedHeight) * 0.5f
+            )
         );
     }
 
@@ -645,14 +1189,30 @@ public class ARLabelPlacer : MonoBehaviour
         rect.pivot = new Vector2(0.5f, 0.5f);
         Vector2 overlaySize = ResolveScreenOverlaySize(group);
         rect.sizeDelta = overlaySize;
-        Vector2 overlayCenter = ResolveNonOverlappingOverlayCenter(group.ScreenPoint, overlaySize);
+        Vector2 overlayCenter = ClampOverlayCenterToScreen(group.ScreenPoint, overlaySize);
         rect.anchoredPosition = overlayCenter;
         placedScreenPoints.Add(overlayCenter);
         placedScreenRects.Add(ScreenRectForOverlay(overlayCenter, overlaySize));
 
         Image background = panel.AddComponent<Image>();
         background.color = lensOverlayBackgroundColor;
+        Sprite lensSprite = ResolveLensOverlaySprite();
+        if (lensSprite != null)
+        {
+            background.sprite = lensSprite;
+            background.type = Image.Type.Sliced;
+        }
         background.raycastTarget = enableTranslationSelectionActions;
+
+        Shadow shadow = panel.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0f, 0f, 0f, 0.12f);
+        shadow.effectDistance = new Vector2(0f, -1f);
+        shadow.useGraphicAlpha = true;
+
+        Outline border = panel.AddComponent<Outline>();
+        border.effectColor = new Color(0f, 0f, 0f, 0.07f);
+        border.effectDistance = new Vector2(1f, -1f);
+        border.useGraphicAlpha = true;
 
         if (enableTranslationSelectionActions)
         {
@@ -668,7 +1228,7 @@ public class ARLabelPlacer : MonoBehaviour
             button.colors = colors;
 
             string selectedText = group.Text.Trim();
-            button.onClick.AddListener(() => ShowTranslationActionMenu(selectedText, overlayCenter));
+            button.onClick.AddListener(() => ShowTranslationActionMenu(selectedText, overlayCenter, panel));
         }
 
         GameObject textObject = new GameObject("TranslatedText");
@@ -683,13 +1243,14 @@ public class ARLabelPlacer : MonoBehaviour
         text.text = Ellipsize(group.Text, maxLabelCharacters);
         text.color = lensOverlayTextColor;
         text.enableWordWrapping = true;
-        text.overflowMode = TextOverflowModes.Truncate;
+        text.overflowMode = TextOverflowModes.Ellipsis;
         text.enableAutoSizing = true;
         text.fontSizeMax = ResolveScreenOverlayFontSize(group);
-        text.fontSizeMin = Mathf.Min(6f, text.fontSizeMax);
-        text.maxVisibleLines = 99;
+        text.fontSizeMin = Mathf.Min(11f, text.fontSizeMax);
+        text.maxVisibleLines = Mathf.Max(1, lensOverlayMaxLines);
         text.alignment = TextAlignmentOptions.MidlineLeft;
         text.margin = Vector4.zero;
+        text.fontStyle = FontStyles.Normal;
         text.raycastTarget = false;
 
         ApplyTranslationVisibility(panel);
@@ -703,7 +1264,7 @@ public class ARLabelPlacer : MonoBehaviour
         GameObject canvasObject = new GameObject("GoogleLensTranslationOverlayCanvas");
         screenOverlayCanvas = canvasObject.AddComponent<Canvas>();
         screenOverlayCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        screenOverlayCanvas.sortingOrder = 40;
+        screenOverlayCanvas.sortingOrder = 80;
 
         CanvasScaler scaler = canvasObject.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
@@ -713,7 +1274,7 @@ public class ARLabelPlacer : MonoBehaviour
         return screenOverlayCanvas;
     }
 
-    private void ShowTranslationActionMenu(string selectedText, Vector2 screenPoint)
+    private void ShowTranslationActionMenu(string selectedText, Vector2 screenPoint, GameObject selectedTarget)
     {
         if (!enableTranslationSelectionActions) return;
         if (!translationsVisible || string.IsNullOrWhiteSpace(selectedText)) return;
@@ -729,7 +1290,7 @@ public class ARLabelPlacer : MonoBehaviour
         rect.anchorMin = Vector2.zero;
         rect.anchorMax = Vector2.zero;
         rect.pivot = new Vector2(0.5f, 0.5f);
-        Vector2 menuSize = new Vector2(Mathf.Min(380f, Screen.width * 0.82f), 88f);
+        Vector2 menuSize = new Vector2(Mathf.Min(520f, Screen.width * 0.92f), 88f);
         rect.sizeDelta = menuSize;
         float verticalOffset = screenPoint.y > Screen.height * 0.55f ? -70f : 70f;
         rect.anchoredPosition = ClampOverlayCenter(screenPoint + new Vector2(0f, verticalOffset), menuSize);
@@ -764,6 +1325,14 @@ public class ARLabelPlacer : MonoBehaviour
             new Color(0.38f, 0.34f, 0.95f, 0.98f)
         );
         askButton.onClick.AddListener(() => AskGeminiAboutSelectedText(selectedText));
+
+        Button hideButton = CreateOverlayActionButton(
+            "HideSelectedTranslation",
+            selectedActionMenu.transform,
+            "Hide",
+            new Color(0.18f, 0.24f, 0.31f, 0.98f)
+        );
+        hideButton.onClick.AddListener(() => HideSelectedTranslation(selectedTarget));
     }
 
     private Button CreateOverlayActionButton(string name, Transform parent, string label, Color color)
@@ -844,6 +1413,17 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         ShowGeminiAnswerPanel("Saved to notes", selectedText);
+    }
+
+    private void HideSelectedTranslation(GameObject selectedTarget)
+    {
+        HideTranslationActionMenu();
+        HideGeminiAnswerPanel();
+
+        if (selectedTarget != null)
+        {
+            Destroy(selectedTarget);
+        }
     }
 
     private async void AskGeminiAboutSelectedText(string selectedText)
@@ -1033,13 +1613,14 @@ public class ARLabelPlacer : MonoBehaviour
     {
         Vector2 size = group.ScreenSize;
         int lineCount = ResolveOverlayLineCount(group);
+        Rect overlayViewport = ResolveOverlayViewportRect();
 
-        float width = Mathf.Clamp(size.x * lensOverlayWidthExpansion, 84f, Screen.width * 0.96f);
-        float expectedTextHeight = ResolveScreenOverlayFontSize(group) * 1.22f * lineCount + 10f;
+        float width = Mathf.Clamp(size.x * lensOverlayWidthExpansion, 82f, Mathf.Max(96f, overlayViewport.width));
+        float expectedTextHeight = ResolveScreenOverlayFontSize(group) * 1.16f * lineCount + 8f;
         float height = Mathf.Clamp(
             Mathf.Max(size.y * lensOverlayHeightExpansion, expectedTextHeight),
-            24f,
-            Mathf.Min(132f, Screen.height * 0.20f)
+            20f,
+            Mathf.Min(94f, overlayViewport.height * 0.22f)
         );
 
         return new Vector2(width, height);
@@ -1049,10 +1630,10 @@ public class ARLabelPlacer : MonoBehaviour
     {
         int lineCount = ResolveOverlayLineCount(group);
         float lineHeight = group.ScreenSize.y / Mathf.Max(1, group.LineCount);
-        float sizeByHeight = lineHeight * 0.82f;
-        float sizeByWidth = group.ScreenSize.x / Mathf.Max(8f, group.Text.Length * 0.55f);
-        float fittedSize = lineCount > 1 ? Mathf.Min(sizeByHeight * 0.92f, sizeByWidth * 1.15f) : Mathf.Min(sizeByHeight, sizeByWidth * 1.25f);
-        return Mathf.Clamp(fittedSize, 9f, 24f);
+        float sizeByHeight = lineHeight * 0.84f;
+        float sizeByWidth = group.ScreenSize.x / Mathf.Max(8f, group.Text.Length * 0.47f);
+        float fittedSize = lineCount > 1 ? Mathf.Min(sizeByHeight * 0.92f, sizeByWidth * 1.08f) : Mathf.Min(sizeByHeight, sizeByWidth * 1.16f);
+        return Mathf.Clamp(fittedSize, 11.5f, 26f);
     }
 
     private int ResolveOverlayLineCount(TranslationLabelGroup group)
@@ -1070,19 +1651,97 @@ public class ARLabelPlacer : MonoBehaviour
     private Vector2 ResolveOverlayTextPadding(Vector2 overlaySize)
     {
         return new Vector2(
-            Mathf.Clamp(overlaySize.x * 0.025f, 2f, 8f),
-            Mathf.Clamp(overlaySize.y * 0.08f, 1f, 5f)
+            Mathf.Clamp(overlaySize.x * 0.030f, 6f, 14f),
+            Mathf.Clamp(overlaySize.y * 0.11f, 3f, 7f)
         );
     }
 
     private Vector2 ClampOverlayCenterToScreen(Vector2 center, Vector2 size)
     {
+        Rect overlayViewport = ResolveOverlayViewportRect();
         float halfWidth = size.x * 0.5f;
         float halfHeight = size.y * 0.5f;
+        float minX = overlayViewport.xMin + halfWidth;
+        float maxX = overlayViewport.xMax - halfWidth;
+        float minY = overlayViewport.yMin + halfHeight;
+        float maxY = overlayViewport.yMax - halfHeight;
+
+        if (minX > maxX)
+        {
+            float midX = overlayViewport.center.x;
+            minX = midX;
+            maxX = midX;
+        }
+
+        if (minY > maxY)
+        {
+            float midY = overlayViewport.center.y;
+            minY = midY;
+            maxY = midY;
+        }
+
         return new Vector2(
-            Mathf.Clamp(center.x, halfWidth, Mathf.Max(halfWidth, Screen.width - halfWidth)),
-            Mathf.Clamp(center.y, halfHeight, Mathf.Max(halfHeight, Screen.height - halfHeight))
+            Mathf.Clamp(center.x, minX, maxX),
+            Mathf.Clamp(center.y, minY, maxY)
         );
+    }
+
+    private Rect ResolveOverlayViewportRect()
+    {
+        Rect safeArea = Screen.safeArea;
+        float sideInset = Mathf.Clamp(Screen.width * 0.026f, 12f, 26f);
+        float topInset = Mathf.Clamp(Screen.height * 0.11f, 92f, 172f);
+        float bottomInset = Mathf.Clamp(Screen.height * 0.19f, 156f, 310f);
+
+        float minX = safeArea.xMin + sideInset;
+        float maxX = safeArea.xMax - sideInset;
+        float minY = safeArea.yMin + bottomInset;
+        float maxY = safeArea.yMax - topInset;
+
+        if (maxX <= minX)
+        {
+            minX = safeArea.xMin;
+            maxX = safeArea.xMax;
+        }
+
+        if (maxY <= minY)
+        {
+            minY = safeArea.yMin;
+            maxY = safeArea.yMax;
+        }
+
+        return Rect.MinMaxRect(minX, minY, maxX, maxY);
+    }
+
+    private static Sprite ResolveLensOverlaySprite()
+    {
+        if (resolvedLensOverlaySprite) return cachedLensOverlaySprite;
+
+        resolvedLensOverlaySprite = true;
+        string[] candidates =
+        {
+            "UI/Skin/UISprite.psd",
+            "UI/Skin/Background.psd"
+        };
+
+        foreach (string candidate in candidates)
+        {
+            try
+            {
+                cachedLensOverlaySprite = Resources.GetBuiltinResource<Sprite>(candidate);
+            }
+            catch
+            {
+                cachedLensOverlaySprite = null;
+            }
+
+            if (cachedLensOverlaySprite != null)
+            {
+                break;
+            }
+        }
+
+        return cachedLensOverlaySprite;
     }
 
     private Vector2 ResolveNonOverlappingOverlayCenter(Vector2 desiredCenter, Vector2 size)
@@ -1283,6 +1942,29 @@ public class ARLabelPlacer : MonoBehaviour
         return CreateFixedLabelOnAnchor(translatedText, hit.pose, targetScreenSize, anchor);
     }
 
+    private bool CreateFixedLabel(
+        string translatedText,
+        ARRaycastHit hit,
+        Vector2 targetScreenSize,
+        bool alignToSurface
+    )
+    {
+        ARAnchor anchor = anchorPlacer.PlaceAnchor(hit);
+        if (anchor == null) return false;
+
+        SurfaceLabelPlacement placement = alignToSurface
+            ? new SurfaceLabelPlacement
+            {
+                Pose = hit.pose,
+                ScreenSize = targetScreenSize,
+                AlignToSurface = true,
+                FitToPhysicalBounds = false
+            }
+            : null;
+
+        return CreateFixedLabelOnAnchor(translatedText, hit.pose, targetScreenSize, anchor, placement);
+    }
+
     private bool CreateFixedLabel(string translatedText, Pose hitPose, Vector2 targetScreenSize)
     {
         return CreateFixedLabel(translatedText, hitPose, targetScreenSize, null);
@@ -1301,6 +1983,16 @@ public class ARLabelPlacer : MonoBehaviour
         return CreateFixedLabelOnAnchor(translatedText, hitPose, targetScreenSize, anchor);
     }
 
+    private bool CreateFixedLabel(string translatedText, SurfaceLabelPlacement placement, ARPlane plane)
+    {
+        if (placement == null) return false;
+
+        ARAnchor anchor = anchorPlacer.PlaceAnchor(placement.Pose, plane);
+        if (anchor == null) return false;
+
+        return CreateFixedLabelOnAnchor(translatedText, placement.Pose, placement.ScreenSize, anchor, placement);
+    }
+
     private bool CreateFixedLabelOnAnchor(
         string translatedText,
         Pose hitPose,
@@ -1308,18 +2000,46 @@ public class ARLabelPlacer : MonoBehaviour
         ARAnchor anchor
     )
     {
+        return CreateFixedLabelOnAnchor(translatedText, hitPose, targetScreenSize, anchor, null);
+    }
+
+    private bool CreateFixedLabelOnAnchor(
+        string translatedText,
+        Pose hitPose,
+        Vector2 targetScreenSize,
+        ARAnchor anchor,
+        SurfaceLabelPlacement surfacePlacement
+    )
+    {
         GameObject label = Instantiate(fixedLabelPrefab, anchor.transform);
         label.transform.localPosition = Vector3.up * Mathf.Max(0f, labelSurfaceOffsetMeters);
         label.transform.localRotation = Quaternion.identity;
-        ApplyDistanceScale(label, hitPose.position);
-
-        if (faceCameraForReadability && label.GetComponent<LabelBillboard>() == null)
+        bool alignToSurface = surfacePlacement != null && surfacePlacement.AlignToSurface;
+        LabelBillboard billboard = label.GetComponent<LabelBillboard>();
+        if (alignToSurface)
         {
-            label.AddComponent<LabelBillboard>();
+            if (billboard != null)
+            {
+                billboard.enabled = false;
+                Destroy(billboard);
+            }
+            label.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
         }
-        else if (!faceCameraForReadability)
+        else if (faceCameraForReadability)
         {
-            label.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
+            if (billboard == null)
+            {
+                label.AddComponent<LabelBillboard>();
+            }
+        }
+        else
+        {
+            if (billboard != null)
+            {
+                billboard.enabled = false;
+                Destroy(billboard);
+            }
+            label.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
         }
 
         var textComp = label.GetComponentInChildren<TextMeshProUGUI>();
@@ -1331,7 +2051,15 @@ public class ARLabelPlacer : MonoBehaviour
 
         ARLectureVisualPolish.StyleLabel(label);
         FitLabelPanel(label, textComp, targetScreenSize);
-        AttachTapToFocus(label, textComp != null ? textComp.text : translatedText);
+        if (surfacePlacement != null && surfacePlacement.FitToPhysicalBounds)
+        {
+            ApplySurfaceFitScale(label, surfacePlacement.SizeMeters);
+        }
+        else
+        {
+            ApplyDistanceScale(label, hitPose.position);
+        }
+        AttachWorldLabelInteraction(label, textComp != null ? textComp.text : translatedText);
         ApplyTranslationVisibility(label);
         if (animateWorldSpaceLabels && translationsVisible)
         {
@@ -1345,12 +2073,15 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         fixedLabels.Add(label);
+        Debug.Log($"[ARLabelPlacer] Created world-space label under anchor {anchor.trackableId}.");
         return true;
     }
 
-    private void AttachTapToFocus(GameObject label, string translatedText)
+    private void AttachWorldLabelInteraction(GameObject label, string translatedText)
     {
-        if (!enableTapToFocusLabel || label == null || string.IsNullOrWhiteSpace(translatedText))
+        if ((!enableTranslationSelectionActions && !enableTapToFocusLabel) ||
+            label == null ||
+            string.IsNullOrWhiteSpace(translatedText))
         {
             return;
         }
@@ -1380,7 +2111,33 @@ public class ARLabelPlacer : MonoBehaviour
         targetImage.raycastTarget = true;
         button.targetGraphic = targetImage;
         string focusedText = translatedText.Trim();
-        button.onClick.AddListener(() => ResolveFocusedTranslationPanel().Show(focusedText));
+        button.onClick.AddListener(() =>
+        {
+            if (enableTranslationSelectionActions)
+            {
+                Vector2 menuPoint = ResolveWorldLabelScreenPoint(label, targetImage);
+                ShowTranslationActionMenu(focusedText, menuPoint, label);
+                return;
+            }
+
+            ResolveFocusedTranslationPanel().Show(focusedText);
+        });
+    }
+
+    private Vector2 ResolveWorldLabelScreenPoint(GameObject label, Image targetImage)
+    {
+        Camera camera = Camera.main;
+        if (camera != null)
+        {
+            Transform target = targetImage != null ? targetImage.transform : label.transform;
+            Vector3 screenPoint = camera.WorldToScreenPoint(target.position);
+            if (screenPoint.z > 0f)
+            {
+                return new Vector2(screenPoint.x, screenPoint.y);
+            }
+        }
+
+        return new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
     }
 
     private Image ResolveTapTarget(GameObject label)
@@ -1508,6 +2265,33 @@ public class ARLabelPlacer : MonoBehaviour
         label.transform.localScale = Vector3.one * scale;
     }
 
+    private void ApplySurfaceFitScale(GameObject label, Vector2 targetSizeMeters)
+    {
+        if (label == null || targetSizeMeters.x <= 0f || targetSizeMeters.y <= 0f)
+        {
+            return;
+        }
+
+        Canvas canvas = label.GetComponentInChildren<Canvas>(true);
+        RectTransform canvasRect = canvas != null ? canvas.GetComponent<RectTransform>() : null;
+        if (canvasRect == null || canvasRect.sizeDelta.x <= 0f || canvasRect.sizeDelta.y <= 0f)
+        {
+            ApplyDistanceScale(label, label.transform.position);
+            return;
+        }
+
+        float canvasScaleX = Mathf.Max(0.000001f, Mathf.Abs(canvasRect.localScale.x));
+        float canvasScaleY = Mathf.Max(0.000001f, Mathf.Abs(canvasRect.localScale.y));
+        float scaleX = targetSizeMeters.x / Mathf.Max(0.000001f, canvasRect.sizeDelta.x * canvasScaleX);
+        float scaleY = targetSizeMeters.y / Mathf.Max(0.000001f, canvasRect.sizeDelta.y * canvasScaleY);
+        scaleX = Mathf.Clamp(scaleX, 0.04f, 4f);
+        scaleY = Mathf.Clamp(scaleY, 0.04f, 4f);
+
+        // The world-space canvas is an XY plane; after rotation onto the surface,
+        // X remains text width and Y remains text height.
+        label.transform.localScale = new Vector3(scaleX, scaleY, 1f);
+    }
+
     private void FitLabelPanel(GameObject label, TextMeshProUGUI textComp, Vector2 targetScreenSize)
     {
         if (label == null || textComp == null) return;
@@ -1516,20 +2300,31 @@ public class ARLabelPlacer : MonoBehaviour
         int lines = EstimateLineCount(textComp.text);
         bool hasTargetSize = targetScreenSize.x > 0f && targetScreenSize.y > 0f;
         float width = hasTargetSize
-            ? Mathf.Clamp(targetScreenSize.x * 1.06f, 48f, 620f)
+            ? Mathf.Clamp(targetScreenSize.x, 28f, 620f)
             : Mathf.Clamp(180f + length * 1.8f, 180f, 560f);
         float height = hasTargetSize
-            ? Mathf.Clamp(targetScreenSize.y * 1.16f, 24f, 360f)
+            ? Mathf.Clamp(targetScreenSize.y, 16f, 360f)
             : Mathf.Clamp(48f + lines * 26f, 56f, 320f);
 
         float fontMax = Mathf.Clamp((height - 6f) / Mathf.Max(1, lines) * 0.78f, 6f, 22f);
         textComp.fontSizeMax = fontMax;
         textComp.fontSizeMin = Mathf.Min(6f, fontMax);
+        if (hasTargetSize)
+        {
+            textComp.alignment = TextAlignmentOptions.Center;
+            textComp.margin = new Vector4(4f, 2f, 4f, 2f);
+        }
 
         RectTransform textRect = textComp.GetComponent<RectTransform>();
         if (textRect != null)
         {
-            textRect.sizeDelta = new Vector2(Mathf.Max(1f, width - 12f), Mathf.Max(1f, height - 8f));
+            Vector2 textPadding = hasTargetSize ? new Vector2(8f, 4f) : new Vector2(12f, 8f);
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.pivot = new Vector2(0.5f, 0.5f);
+            textRect.anchoredPosition = Vector2.zero;
+            textRect.offsetMin = new Vector2(textPadding.x * 0.5f, textPadding.y * 0.5f);
+            textRect.offsetMax = new Vector2(-textPadding.x * 0.5f, -textPadding.y * 0.5f);
         }
 
         foreach (Canvas canvas in label.GetComponentsInChildren<Canvas>(true))
@@ -1602,6 +2397,15 @@ public class ARLabelPlacer : MonoBehaviour
         public int LineCount;
     }
 
+    private sealed class SurfaceLabelPlacement
+    {
+        public Pose Pose;
+        public Vector2 ScreenSize;
+        public Vector2 SizeMeters;
+        public bool AlignToSurface;
+        public bool FitToPhysicalBounds;
+    }
+
     private sealed class TranslationLabelGroup
     {
         public string Text;
@@ -1638,10 +2442,22 @@ public class ARLabelPlacer : MonoBehaviour
                 BBox = union,
                 ImagePoint = imagePoint,
                 ScreenPoint = placer.ImagePointToScreenPoint(imagePoint, response.image_width, response.image_height),
-                ScreenSize = ImageRectToScreenSize(union, response.image_width, response.image_height),
+                ScreenSize = placer.ImageRectToScreenSize(union, response.image_width, response.image_height),
                 LineCount = preserveLineBreaks ? Mathf.Max(1, lines.Count) : 1
             };
         }
+    }
+
+    private readonly struct ImageScreenMapping
+    {
+        public ImageScreenMapping(float scale, Vector2 offset)
+        {
+            Scale = Mathf.Max(0.0001f, scale);
+            Offset = offset;
+        }
+
+        public float Scale { get; }
+        public Vector2 Offset { get; }
     }
 
 }

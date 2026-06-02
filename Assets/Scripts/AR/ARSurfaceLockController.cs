@@ -19,9 +19,14 @@ public class ARSurfaceLockController : MonoBehaviour
     [SerializeField] private ARRaycastController raycastController;
     [SerializeField] private ARLabelPlacer labelPlacer;
     [SerializeField] private ARSurfaceOutlineRenderer outlineRenderer;
-    [SerializeField] private bool disablePlaneDetectionAfterLock = true;
+    [SerializeField] private bool disablePlaneDetectionAfterLock = false;
     [SerializeField] private PlaneDetectionMode requestedDetectionMode =
         PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
+    [SerializeField] private bool preferVerticalSurfaces = true;
+    [SerializeField] private float maxVerticalSurfaceNormalY = 0.85f;
+    [SerializeField] private bool usePlaneRotationForLock = true;
+    [SerializeField] private bool allowEstimatedSurfaceFallback = true;
+    [SerializeField] private float estimatedSurfaceFallbackDelaySeconds = 0f;
 
     public event Action<ARSurfaceLockState> TrackingStateChanged;
     public event Action<Pose> SurfaceLocked;
@@ -60,11 +65,16 @@ public class ARSurfaceLockController : MonoBehaviour
             return;
         }
 
-        if (raycastController != null && raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit))
+        if (raycastController != null &&
+            raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit, IsAcceptableRaycastHit))
         {
             TransitionTo(ARSurfaceLockState.PlaneFound);
-            LockSurface(hit);
-            return;
+            if (LockSurface(hit))
+            {
+                return;
+            }
+
+            RestoreSearchStateAfterRejectedLock();
         }
 
         if (currentState == ARSurfaceLockState.SearchingPlane &&
@@ -86,41 +96,84 @@ public class ARSurfaceLockController : MonoBehaviour
         TransitionTo(ARSurfaceLockState.SearchingPlane);
     }
 
-    public void ObservePlaneFound(ARPlane plane)
+    public bool ObservePlaneFound(ARPlane plane)
     {
         ResolveDependencies();
 
-        if (raycastController != null && raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit))
+        if (raycastController != null &&
+            raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit, IsAcceptableRaycastHit))
         {
             TransitionTo(ARSurfaceLockState.PlaneFound);
-            LockSurface(hit);
-            return;
+            if (LockSurface(hit, plane))
+            {
+                return true;
+            }
+
+            RestoreSearchStateAfterRejectedLock();
         }
 
-        if (plane != null)
+        if (plane != null && IsAcceptableSurface(plane, new Pose(plane.transform.position, plane.transform.rotation)))
         {
             TransitionTo(ARSurfaceLockState.PlaneFound);
-            LockSurface(new Pose(plane.transform.position, plane.transform.rotation), plane);
+            if (LockSurface(new Pose(plane.transform.position, plane.transform.rotation), plane))
+            {
+                return true;
+            }
+
+            RestoreSearchStateAfterRejectedLock();
         }
+
+        return HasLockedSurface;
     }
 
-    public void LockSurface(Pose pose)
+    public bool LockSurface(Pose pose)
     {
-        LockSurface(pose, null);
+        return LockSurface(pose, null);
     }
 
-    public void LockSurface(ARRaycastHit hit)
+    public bool LockSurface(ARRaycastHit hit)
     {
-        LockSurface(hit.pose, hit.trackable as ARPlane);
+        return LockSurface(hit, null);
     }
 
-    public void LockSurface(Pose pose, ARPlane plane)
+    private bool LockSurface(ARRaycastHit hit, ARPlane fallbackPlane)
+    {
+        ARPlane hitPlane = hit.trackable as ARPlane ?? ResolvePlane(hit.trackableId);
+        if (hitPlane == null &&
+            fallbackPlane != null &&
+            IsAcceptableSurface(fallbackPlane, new Pose(fallbackPlane.transform.position, fallbackPlane.transform.rotation)))
+        {
+            hitPlane = fallbackPlane;
+        }
+
+        Pose stablePose = BuildStableSurfacePose(hit.pose, hitPlane);
+        if (!IsAcceptableSurface(hitPlane, stablePose))
+        {
+            Debug.LogWarning("[ARSurfaceLockController] Ignored non-vertical or unstable surface lock candidate.");
+            return false;
+        }
+
+        return LockSurface(stablePose, hitPlane);
+    }
+
+    public bool LockSurface(Pose pose, ARPlane plane)
     {
         ResolveDependencies();
+        plane = plane != null ? plane : ResolveNearestAcceptablePlane(pose.position);
+        pose = BuildStableSurfacePose(pose, plane);
+        if (!IsAcceptableSurface(plane, pose))
+        {
+            Debug.LogWarning("[ARSurfaceLockController] Ignored non-vertical or unstable surface pose.");
+            return false;
+        }
+
         lockedPose = pose;
         lockedPlane = plane;
         labelPlacer?.CachePlanePose(pose);
         outlineRenderer?.ShowLockedPose(pose);
+        Debug.Log(lockedPlane != null
+            ? $"[ARSurfaceLockController] Locked surface on ARPlane {lockedPlane.trackableId}."
+            : "[ARSurfaceLockController] Locked surface pose without ARPlane; anchors will use standalone mode.");
         TransitionTo(ARSurfaceLockState.SurfaceLocked);
         SurfaceLocked?.Invoke(pose);
 
@@ -128,6 +181,8 @@ public class ARSurfaceLockController : MonoBehaviour
         {
             SetPlaneDetection(false, true);
         }
+
+        return true;
     }
 
     public void ClearLock()
@@ -175,6 +230,18 @@ public class ARSurfaceLockController : MonoBehaviour
         outlineRenderer?.ShowSurface(worldCorners);
     }
 
+    private void RestoreSearchStateAfterRejectedLock()
+    {
+        if (lockedPose.HasValue)
+        {
+            TransitionTo(ARSurfaceLockState.SurfaceLocked);
+            return;
+        }
+
+        bool timedOut = searchStartedAt > 0f && Time.time - searchStartedAt > 4f;
+        TransitionTo(timedOut ? ARSurfaceLockState.TrackingLimited : ARSurfaceLockState.SearchingPlane);
+    }
+
     private void OnSessionStateChanged(ARSessionStateChangedEventArgs args)
     {
         if (args.state == ARSessionState.SessionTracking)
@@ -220,6 +287,7 @@ public class ARSurfaceLockController : MonoBehaviour
     private void SetPlaneDetection(bool enabled, bool preserveLockedPlane)
     {
         if (planeManager == null) return;
+        bool shouldPreserveLockedPlane = preserveLockedPlane && lockedPlane != null;
 
         if (enabled)
         {
@@ -230,13 +298,134 @@ public class ARSurfaceLockController : MonoBehaviour
             planeManager.requestedDetectionMode = PlaneDetectionMode.None;
         }
 
-        planeManager.enabled = enabled || preserveLockedPlane;
+        planeManager.enabled = enabled || shouldPreserveLockedPlane;
         foreach (ARPlane plane in planeManager.trackables)
         {
-            bool keepLockedPlane = preserveLockedPlane && lockedPlane != null && plane == lockedPlane;
+            bool keepLockedPlane = shouldPreserveLockedPlane && plane == lockedPlane;
             plane.gameObject.SetActive(enabled || keepLockedPlane);
             SetPlaneVisualsVisible(plane, enabled);
         }
+    }
+
+    private ARPlane ResolvePlane(TrackableId trackableId)
+    {
+        ResolveDependencies();
+        if (planeManager == null) return null;
+
+        foreach (ARPlane plane in planeManager.trackables)
+        {
+            if (plane != null && plane.trackableId == trackableId)
+            {
+                return plane;
+            }
+        }
+
+        return null;
+    }
+
+    private ARPlane ResolveNearestAcceptablePlane(Vector3 position)
+    {
+        if (planeManager == null) return null;
+
+        ARPlane nearest = null;
+        float nearestDistanceSquared = float.PositiveInfinity;
+        foreach (ARPlane plane in planeManager.trackables)
+        {
+            if (plane == null) continue;
+            if (!IsAcceptableSurface(plane, new Pose(plane.transform.position, plane.transform.rotation))) continue;
+
+            float distanceSquared = (plane.transform.position - position).sqrMagnitude;
+            if (distanceSquared < nearestDistanceSquared)
+            {
+                nearestDistanceSquared = distanceSquared;
+                nearest = plane;
+            }
+        }
+
+        return nearest;
+    }
+
+    private bool IsAcceptableRaycastHit(ARRaycastHit hit)
+    {
+        ARPlane hitPlane = hit.trackable as ARPlane ?? ResolvePlane(hit.trackableId);
+        Pose stablePose = BuildStableSurfacePose(hit.pose, hitPlane);
+        return IsAcceptableSurface(hitPlane, stablePose);
+    }
+
+    private bool IsAcceptableSurface(ARPlane plane, Pose pose)
+    {
+        if (!preferVerticalSurfaces)
+        {
+            return true;
+        }
+
+        if (plane == null && allowEstimatedSurfaceFallback && !CanUseEstimatedSurfaceFallback())
+        {
+            return false;
+        }
+
+        Vector3 normal = plane != null
+            ? plane.transform.up
+            : pose.rotation * Vector3.up;
+        if (normal.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+
+        normal.Normalize();
+        return Mathf.Abs(normal.y) <= Mathf.Clamp01(maxVerticalSurfaceNormalY);
+    }
+
+    private Pose BuildStableSurfacePose(Pose pose, ARPlane plane)
+    {
+        if (plane == null)
+        {
+            return TryBuildCameraFacingVerticalPose(pose.position, out Pose fallbackPose)
+                ? fallbackPose
+                : pose;
+        }
+
+        if (!usePlaneRotationForLock)
+        {
+            return pose;
+        }
+
+        return new Pose(pose.position, plane.transform.rotation);
+    }
+
+    private bool CanUseEstimatedSurfaceFallback()
+    {
+        if (!allowEstimatedSurfaceFallback) return false;
+        if (searchStartedAt <= 0f) return false;
+
+        return Time.time - searchStartedAt >= Mathf.Max(0f, estimatedSurfaceFallbackDelaySeconds);
+    }
+
+    private bool TryBuildCameraFacingVerticalPose(Vector3 position, out Pose pose)
+    {
+        pose = Pose.identity;
+
+        Camera camera = Camera.main;
+        if (camera == null)
+        {
+            return false;
+        }
+
+        Vector3 normal = camera.transform.position - position;
+        normal = Vector3.ProjectOnPlane(normal, Vector3.up);
+        if (normal.sqrMagnitude < 0.000001f)
+        {
+            normal = Vector3.ProjectOnPlane(-camera.transform.forward, Vector3.up);
+        }
+
+        if (normal.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+
+        normal.Normalize();
+        pose = new Pose(position, Quaternion.LookRotation(Vector3.up, normal));
+        return true;
     }
 
     private static void SetPlaneVisualsVisible(ARPlane plane, bool visible)

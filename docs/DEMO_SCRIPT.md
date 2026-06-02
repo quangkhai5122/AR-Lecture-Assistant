@@ -4,7 +4,7 @@
 
 - Android ARCore device in landscape orientation.
 - Backend running on the demo laptop and reachable from the phone over LAN.
-- Unity build configured with backend mock mode enabled for deterministic demo, with real OCR mode available when the environment is ready.
+- Unity build configured with backend mock mode disabled and Google Vision OCR + Google Translate credentials available in the backend environment.
 - Slide or board visible with high contrast text.
 
 ## Two-Minute Flow
@@ -23,8 +23,8 @@
 
 ## Fallback Path
 
-- If real OCR or network latency is unstable, keep backend mock mode enabled.
-- Use the same flow and explain that mock mode keeps the demo deterministic while preserving the AR surface lock and world-space placement behavior.
+- If Google API credentials or network latency are unstable, enable backend mock mode only as an explicit fallback.
+- Use the same flow and explain that fallback mode is deterministic but does not read the current slide.
 
 ## Talking Points
 

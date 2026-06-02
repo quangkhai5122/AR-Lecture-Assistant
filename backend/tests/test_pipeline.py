@@ -230,6 +230,162 @@ def test_tesseract_ocr_on_sample_slide(monkeypatch):
     assert all(0 <= block["confidence"] <= 1 for block in data["blocks"])
 
 
+def test_google_vision_ocr_provider_uses_api_key(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "responses": [
+                    {
+                        "fullTextAnnotation": {
+                            "pages": [
+                                {
+                                    "blocks": [
+                                        {
+                                            "paragraphs": [
+                                                {
+                                                    "words": [
+                                                        {
+                                                            "symbols": [{"text": "Hello"}],
+                                                            "boundingBox": {
+                                                                "vertices": [
+                                                                    {"x": 5, "y": 10},
+                                                                    {"x": 35, "y": 10},
+                                                                    {"x": 35, "y": 30},
+                                                                    {"x": 5, "y": 30},
+                                                                ]
+                                                            },
+                                                            "confidence": 0.98,
+                                                        },
+                                                        {
+                                                            "symbols": [{"text": "slide"}],
+                                                            "boundingBox": {
+                                                                "vertices": [
+                                                                    {"x": 42, "y": 10},
+                                                                    {"x": 84, "y": 10},
+                                                                    {"x": 84, "y": 30},
+                                                                    {"x": 42, "y": 30},
+                                                                ]
+                                                            },
+                                                            "confidence": 0.96,
+                                                        },
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    def fake_post(url, params, json, timeout):
+        calls.append((url, params, json, timeout))
+        return FakeResponse()
+
+    monkeypatch.setenv("GOOGLE_VISION_API_KEY", "vision-key")
+    monkeypatch.setattr("services.ocr_service.requests.post", fake_post)
+
+    service = OCRService()
+    result = service.recognize(
+        image_base64=_image_base64(width=120, height=60),
+        force_mock=False,
+        provider="google",
+    )
+
+    assert result.provider == "google"
+    assert result.mock_used is False
+    assert result.blocks[0]["text"] == "Hello slide"
+    assert result.blocks[0]["bbox"] == [5, 10, 84, 30]
+    assert calls[0][1] == {"key": "vision-key"}
+    assert calls[0][2]["requests"][0]["features"][0]["type"] == "DOCUMENT_TEXT_DETECTION"
+
+
+def test_google_vision_full_text_splits_paragraph_into_lines(monkeypatch):
+    def word(text, x1, y1, x2, y2):
+        return {
+            "symbols": [{"text": text}],
+            "boundingBox": {
+                "vertices": [
+                    {"x": x1, "y": y1},
+                    {"x": x2, "y": y1},
+                    {"x": x2, "y": y2},
+                    {"x": x1, "y": y2},
+                ]
+            },
+            "confidence": 0.9,
+        }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "responses": [
+                    {
+                        "fullTextAnnotation": {
+                            "pages": [
+                                {
+                                    "blocks": [
+                                        {
+                                            "paragraphs": [
+                                                {
+                                                    "words": [
+                                                        word("First", 5, 10, 45, 30),
+                                                        word("line", 52, 10, 85, 30),
+                                                        word("Second", 5, 42, 65, 62),
+                                                        word("line", 72, 42, 105, 62),
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setenv("GOOGLE_VISION_API_KEY", "vision-key")
+    monkeypatch.setattr("services.ocr_service.requests.post", lambda *args, **kwargs: FakeResponse())
+
+    service = OCRService()
+    result = service.recognize(
+        image_base64=_image_base64(width=160, height=90),
+        force_mock=False,
+        provider="google",
+    )
+
+    assert [block["text"] for block in result.blocks] == ["First line", "Second line"]
+    assert [block["bbox"] for block in result.blocks] == [[5, 10, 85, 30], [5, 42, 105, 62]]
+
+def test_google_vision_ocr_requires_api_key(monkeypatch):
+    for key in (
+        "GOOGLE_VISION_API_KEY",
+        "GOOGLE_CLOUD_VISION_API_KEY",
+        "GOOGLE_CLOUD_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    service = OCRService()
+    with pytest.raises(Exception) as exc_info:
+        service.recognize(
+            image_base64=_image_base64(width=120, height=60),
+            force_mock=False,
+            provider="google",
+        )
+
+    assert "GOOGLE_VISION_API_KEY" in str(exc_info.value)
+
+
 @pytest.mark.skipif(shutil.which("tesseract") is None, reason="tesseract binary is not installed")
 def test_pipeline_uses_real_tesseract_ocr_with_mock_translation(monkeypatch):
     pytest.importorskip("pytesseract")
@@ -288,8 +444,8 @@ def test_document_surface_detects_quadrilateral():
     surface = service.detect(image, [], 320, 220)
 
     assert surface is not None
-    assert surface["method"] == "contour_quadrilateral"
-    assert surface["source"] == "image_edges"
+    assert surface["method"] in {"contour_quadrilateral", "contour_min_area_quad", "hough_quadrilateral"}
+    assert surface["source"] in {"opencv_contours", "opencv_hough"}
     assert len(surface["corners"]) == 8
     assert 0 <= surface["confidence"] <= 1
     assert surface["corners"][0] <= 48
@@ -318,6 +474,23 @@ def test_document_surface_returns_none_for_blank_image():
 
     assert service.detect(blank, [], 320, 220) is None
 
+
+def test_pipeline_prefers_ocr_union_over_non_opencv_edge_fallback():
+    service = PipelineService()
+    edge_surface = {
+        "corners": [20, 20, 300, 20, 300, 200, 20, 200],
+        "confidence": 0.9,
+        "method": "edge_energy_quad",
+        "source": "image_edges",
+    }
+    ocr_surface = {
+        "corners": [80, 60, 240, 60, 240, 140, 80, 140],
+        "confidence": 0.52,
+        "method": "ocr_bbox_union",
+        "source": "ocr_blocks",
+    }
+
+    assert service._select_document_surface(edge_surface, ocr_surface) is ocr_surface
 
 def test_document_surface_crop_maps_ocr_boxes_to_original_image():
     service = DocumentSurfaceService()
@@ -405,7 +578,47 @@ def test_document_surface_detects_four_of_five_sample_slides():
     assert detected >= 4
 
 
-def test_pipeline_runs_real_ocr_on_surface_crop(monkeypatch):
+def test_pipeline_real_ocr_uses_original_frame_by_default(monkeypatch):
+    service = PipelineService()
+    seen_sizes: list[tuple[int, int]] = []
+
+    def fake_recognize(
+        image_base64,
+        image_width=None,
+        image_height=None,
+        force_mock=True,
+        provider=None,
+    ):
+        image = service.document_surface_service.decode_image(image_base64)
+        seen_sizes.append(image.size)
+        return OCRResult(
+            blocks=[{"id": "ocr_1", "text": "Inside surface", "bbox": [8, 10, 120, 32], "confidence": 0.9}],
+            image_width=image.width,
+            image_height=image.height,
+            provider="fake",
+            mock_used=False,
+            warnings=[],
+        )
+
+    monkeypatch.setattr(service.ocr_service, "recognize", fake_recognize)
+
+    result = service.process_frame({
+        "frame_id": "surface_original",
+        "image_base64": _surface_image_base64(),
+        "mock": False,
+        "ocr_provider": "tesseract",
+        "translation_provider": "mock",
+    })
+
+    assert seen_sizes
+    assert seen_sizes[0] == (320, 220)
+    assert result["image_width"] == 320
+    assert result["image_height"] == 220
+    assert result["document_surface"]["method"] in {"contour_quadrilateral", "contour_min_area_quad", "hough_quadrilateral"}
+    assert result["blocks"][0]["bbox"] == [8, 10, 120, 32]
+    assert not any("surface crop" in warning for warning in result["warnings"])
+
+def test_pipeline_runs_real_ocr_on_surface_crop_when_requested(monkeypatch):
     service = PipelineService()
     seen_sizes: list[tuple[int, int]] = []
 
@@ -435,6 +648,7 @@ def test_pipeline_runs_real_ocr_on_surface_crop(monkeypatch):
         "mock": False,
         "ocr_provider": "tesseract",
         "translation_provider": "mock",
+        "use_surface_crop_for_ocr": True,
     })
 
     assert seen_sizes
@@ -442,7 +656,7 @@ def test_pipeline_runs_real_ocr_on_surface_crop(monkeypatch):
     assert seen_sizes[0][1] < 220
     assert result["image_width"] == 320
     assert result["image_height"] == 220
-    assert result["document_surface"]["method"] == "contour_quadrilateral"
+    assert result["document_surface"]["method"] in {"contour_quadrilateral", "contour_min_area_quad", "hough_quadrilateral"}
     assert result["blocks"][0]["bbox"][0] > 8
     assert any("surface crop" in warning for warning in result["warnings"])
 
@@ -745,7 +959,12 @@ def test_google_translation_provider_uses_api_key_and_cache(monkeypatch):
 
 
 def test_google_translation_requires_api_key(monkeypatch):
-    monkeypatch.delenv("GOOGLE_TRANSLATE_API_KEY", raising=False)
+    for key in (
+        "GOOGLE_TRANSLATE_API_KEY",
+        "GOOGLE_CLOUD_TRANSLATE_API_KEY",
+        "GOOGLE_CLOUD_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
     service = TranslationService()
     with pytest.raises(Exception) as exc_info:
         service.translate_batch(["Hello"], target_language="vi", force_mock=False, provider="google")
@@ -758,6 +977,19 @@ def test_invalid_pipeline_request_returns_400():
     assert response.status_code == 400
     assert response.get_json()["error"]["code"] == "pipeline_error"
 
+
+def test_pipeline_rejects_non_boolean_surface_crop_flag():
+    client = app.test_client()
+    response = client.post("/pipeline/frame", json={
+        "frame_id": "bad_surface_crop_flag",
+        "mock": True,
+        "target_language": "vi",
+        "use_surface_crop_for_ocr": "true",
+    })
+    data = response.get_json()
+    assert response.status_code == 400
+    assert data["error"]["code"] == "pipeline_error"
+    assert "use_surface_crop_for_ocr" in data["error"]["message"]
 
 def test_translate_endpoint_validates_texts_shape():
     client = app.test_client()

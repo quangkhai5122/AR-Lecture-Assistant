@@ -36,14 +36,14 @@ public class ARSurfaceOutlineRenderer : MonoBehaviour
     public void ShowLockedPose(Pose pose, float widthMeters = 0.7f, float heightMeters = 0.42f)
     {
         Vector3 right = pose.rotation * Vector3.right * Mathf.Max(0.05f, widthMeters * 0.5f);
-        Vector3 forward = pose.rotation * Vector3.forward * Mathf.Max(0.05f, heightMeters * 0.5f);
+        Vector3 surfaceUp = pose.rotation * Vector3.forward * Mathf.Max(0.05f, heightMeters * 0.5f);
         Vector3 center = pose.position;
         ShowSurface(new[]
         {
-            center - right + forward,
-            center + right + forward,
-            center + right - forward,
-            center - right - forward,
+            center - right + surfaceUp,
+            center + right + surfaceUp,
+            center + right - surfaceUp,
+            center - right - surfaceUp,
         });
     }
 

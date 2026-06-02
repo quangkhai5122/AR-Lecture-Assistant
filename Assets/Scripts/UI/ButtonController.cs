@@ -25,11 +25,11 @@ public class ButtonController : MonoBehaviour
 
     [Header("OCR / Translate Pipeline")]
     [SerializeField] private bool useBackendPipeline = true;
-    [SerializeField] private bool backendMockMode = true;
+    [SerializeField] private bool backendMockMode = false;
     [SerializeField] private string targetLanguage = "vi";
     [SerializeField] private BackendPipelineMode backendPipelineMode = BackendPipelineMode.PipelineFrame;
-    [SerializeField] private string ocrProvider = "";
-    [SerializeField] private string translationProvider = "mock";
+    [SerializeField] private string ocrProvider = "google";
+    [SerializeField] private string translationProvider = "google";
     [SerializeField] private FrameCaptureService frameCaptureService;
     [SerializeField] private HttpPipelineClient httpPipelineClient;
 
@@ -43,6 +43,7 @@ public class ButtonController : MonoBehaviour
     [Header("UI Mode")]
     [SerializeField] private bool useCompactDemoControls = false;
     [SerializeField] private bool showTranslationVisibilityButton = true;
+    [SerializeField] private bool showScreenSubtitleAfterTranslation = false;
 
     [Header("Debug")]
     [SerializeField] private bool showAdvancedControls = false;
@@ -179,8 +180,14 @@ public class ButtonController : MonoBehaviour
         string step = "init";
         try
         {
+            labelPlacer?.SetTranslationsVisible(false);
+            labelPlacer?.ClearFixedLabels();
+            labelPlacer?.SetTranslationsVisible(true);
+            await System.Threading.Tasks.Task.Yield();
+
             step = "1-capture";
             PipelineResponse response = await RunPipelineAsync();
+            debugPanel?.UpdatePipelineResponse(response);
 
             step = "2-count";
             int readableBlocks = labelPlacer != null ? labelPlacer.CountReadableBlocks(response) : CountReadableBlocks(response);
@@ -192,14 +199,24 @@ public class ButtonController : MonoBehaviour
 
             step = "3-place";
             int placed = labelPlacer != null ? labelPlacer.PlacePipelineLabels(response) : 0;
+            if (labelPlacer != null)
+            {
+                debugPanel?.UpdateTrackingState($"Placed {placed}: {labelPlacer.LastPlacementSummary}");
+            }
             if (placed == 0)
             {
                 stateManager.SetError("Chưa ghim được bản dịch. Hãy quét lại mặt bảng/slide.");
                 return;
             }
 
-            step = "4-subtitle";
-            if (response.blocks != null && response.blocks.Count > 0)
+            step = "4-overlay-cleanup";
+            if (!showScreenSubtitleAfterTranslation ||
+                labelPlacer == null ||
+                labelPlacer.UsesScreenSpaceTranslationOverlay)
+            {
+                labelPlacer?.HideSubtitle();
+            }
+            else if (response.blocks != null && response.blocks.Count > 0)
             {
                 string subtitle = response.blocks[0].translated_text;
                 if (!string.IsNullOrWhiteSpace(subtitle))
@@ -881,7 +898,7 @@ public class ButtonController : MonoBehaviour
         string message = ex != null ? ex.Message ?? string.Empty : string.Empty;
         if (ContainsIgnoreCase(message, "127.0.0.1") || ContainsIgnoreCase(message, "localhost"))
         {
-            return "Backend URL dang la 127.0.0.1 tren Android. Doi sang http://192.168.1.8:5000.";
+            return "Backend dang la 127.0.0.1. Doi sang IP LAN.";
         }
 
         if (ContainsIgnoreCase(message, "CLEARTEXT"))
@@ -889,11 +906,20 @@ public class ButtonController : MonoBehaviour
             return "Android dang chan HTTP. APK can bat cleartext traffic hoac dung HTTPS.";
         }
 
+        if (ContainsIgnoreCase(message, "Backend request failed (503)") ||
+            ContainsIgnoreCase(message, "response code: 503"))
+        {
+            return "Backend 503: xem log OCR/API key.";
+        }
+
         if (ContainsIgnoreCase(message, "Cannot connect") ||
+            ContainsIgnoreCase(message, "Failed to connect") ||
+            ContainsIgnoreCase(message, "Connection refused") ||
+            ContainsIgnoreCase(message, "No route") ||
             ContainsIgnoreCase(message, "timed out") ||
             ContainsIgnoreCase(message, "resolve"))
         {
-            return "Khong noi duoc backend. Kiem tra cung Wi-Fi, backend 0.0.0.0:5000 va firewall.";
+            return $"Backend offline: {GetBackendHostPortForMessage()}";
         }
 
         return "Khong the dich. Kiem tra backend va bam Thu lai.";
@@ -904,7 +930,7 @@ public class ButtonController : MonoBehaviour
         string message = ex != null ? ex.Message ?? string.Empty : string.Empty;
         if (ContainsIgnoreCase(message, "127.0.0.1") || ContainsIgnoreCase(message, "localhost"))
         {
-            return "Backend Android dang tro sai 127.0.0.1. Hay doi sang IP LAN 192.168.1.8.";
+            return "Backend sai 127.0.0.1. Doi sang IP LAN.";
         }
 
         if (ContainsIgnoreCase(message, "CLEARTEXT"))
@@ -912,14 +938,58 @@ public class ButtonController : MonoBehaviour
             return "Android dang chan HTTP backend. Ban APK can bat cleartext traffic.";
         }
 
+        if (ContainsIgnoreCase(message, "Backend request failed (503)") ||
+            ContainsIgnoreCase(message, "response code: 503"))
+        {
+            return "Backend 503: xem log OCR/API key.";
+        }
+
         if (ContainsIgnoreCase(message, "Cannot connect") ||
+            ContainsIgnoreCase(message, "Failed to connect") ||
+            ContainsIgnoreCase(message, "Connection refused") ||
+            ContainsIgnoreCase(message, "No route") ||
             ContainsIgnoreCase(message, "timed out") ||
             ContainsIgnoreCase(message, "resolve"))
         {
-            return "Khong noi duoc backend. Kiem tra cung Wi-Fi va firewall cong 5000.";
+            return $"Backend offline: {GetBackendHostPortForMessage()}";
         }
 
         return string.Empty;
+    }
+
+    private string GetBackendUrlForMessage()
+    {
+        if (httpPipelineClient == null)
+        {
+            return HttpPipelineClient.DefaultAndroidLanBackendUrl;
+        }
+
+        string backendUrl = httpPipelineClient.GetBackendBaseUrl();
+        return string.IsNullOrWhiteSpace(backendUrl)
+            ? HttpPipelineClient.DefaultAndroidLanBackendUrl
+            : backendUrl;
+    }
+
+    private string GetBackendPortForMessage()
+    {
+        string backendUrl = GetBackendUrlForMessage();
+        if (Uri.TryCreate(backendUrl, UriKind.Absolute, out Uri uri) && uri.Port > 0)
+        {
+            return uri.Port.ToString();
+        }
+
+        return "5000";
+    }
+
+    private string GetBackendHostPortForMessage()
+    {
+        string backendUrl = GetBackendUrlForMessage();
+        if (Uri.TryCreate(backendUrl, UriKind.Absolute, out Uri uri))
+        {
+            return $"{uri.Host}:{GetBackendPortForMessage()}";
+        }
+
+        return backendUrl;
     }
 
     private static bool ContainsIgnoreCase(string value, string pattern)

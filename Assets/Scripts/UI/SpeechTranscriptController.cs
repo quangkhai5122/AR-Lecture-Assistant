@@ -109,12 +109,11 @@ public class SpeechTranscriptController : MonoBehaviour
 
         if (autoStartListening)
         {
-            StartListening();
+            Debug.Log("[SpeechTranscript] autoStartListening is ignored; press Transcript to start listening.");
         }
-        else
-        {
-            SetStatus("Transcript ready");
-        }
+
+        SetStatus("Transcript ready");
+        UpdateTranscriptToggleLabel();
     }
 
     public void EnsureTranscriptUiVisible()
@@ -163,7 +162,7 @@ public class SpeechTranscriptController : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (toggleButton != null) toggleButton.onClick.RemoveListener(ToggleModal);
+        if (toggleButton != null) toggleButton.onClick.RemoveListener(OnTranscriptTogglePressed);
         if (addToNoteButton != null) addToNoteButton.onClick.RemoveListener(AddCurrentTranscriptToNote);
         if (viewNotesButton != null) viewNotesButton.onClick.RemoveListener(ToggleNotesView);
         if (exportNotesButton != null) exportNotesButton.onClick.RemoveListener(ExportNotes);
@@ -182,6 +181,8 @@ public class SpeechTranscriptController : MonoBehaviour
 
         isListening = true;
         waitingForPermission = false;
+        UpdateTranscriptToggleLabel();
+        uiDirty = true;
 
         if (useBackendSpeechTranslation)
         {
@@ -206,6 +207,7 @@ public class SpeechTranscriptController : MonoBehaviour
 
     public void StopListening()
     {
+        bool wasListening = isListening;
         isListening = false;
         usingMockProvider = false;
         waitingForPermission = false;
@@ -221,6 +223,14 @@ public class SpeechTranscriptController : MonoBehaviour
             Microphone.End(null);
         }
         speechService?.StopListening();
+
+        if (wasListening)
+        {
+            SetStatus("Transcript paused");
+        }
+
+        UpdateTranscriptToggleLabel();
+        uiDirty = true;
     }
 
     private void StartBackendSpeechTranslation()
@@ -961,7 +971,7 @@ public class SpeechTranscriptController : MonoBehaviour
         toggleRect.pivot = new Vector2(1f, 1f);
         toggleRect.anchoredPosition = new Vector2(-16f, -70f);
         toggleRect.sizeDelta = new Vector2(160f, 50f);
-        toggleButton.onClick.AddListener(ToggleModal);
+        toggleButton.onClick.AddListener(OnTranscriptTogglePressed);
 
         modalRoot = new GameObject("TranscriptModal");
         modalRoot.transform.SetParent(parent, false);
@@ -1006,7 +1016,7 @@ public class SpeechTranscriptController : MonoBehaviour
         closeRect.sizeDelta = new Vector2(56f, 56f);
         closeButton.onClick.AddListener(HideModal);
 
-        statusText = CreateText("TranscriptStatus", parent, "Starting transcript", 20f, FontStyles.Normal);
+        statusText = CreateText("TranscriptStatus", parent, "Transcript ready", 20f, FontStyles.Normal);
         RectTransform statusRect = statusText.GetComponent<RectTransform>();
         statusRect.anchorMin = new Vector2(0f, 1f);
         statusRect.anchorMax = new Vector2(1f, 1f);
@@ -1193,18 +1203,28 @@ public class SpeechTranscriptController : MonoBehaviour
         }
     }
 
-    private void ToggleModal()
+    private void UpdateTranscriptToggleLabel()
+    {
+        SetButtonLabel(toggleButton, isListening ? "Stop" : "Transcript");
+    }
+
+    private void OnTranscriptTogglePressed()
     {
         if (modalRoot == null) return;
 
-        bool shouldShow = !modalRoot.activeSelf;
-        modalRoot.SetActive(shouldShow);
-        if (shouldShow && !isListening)
+        if (!isListening)
         {
+            modalRoot.SetActive(true);
             StartListening();
+        }
+        else
+        {
+            StopListening();
+            modalRoot.SetActive(false);
         }
 
         uiDirty = true;
+        RefreshTranscriptText();
     }
 
     private void HideModal()

@@ -38,7 +38,7 @@ public enum FrameImageEncoding
 public class FrameCaptureService : MonoBehaviour
 {
     [Header("Capture Source")]
-    public FrameCaptureSource captureSource = FrameCaptureSource.Auto;
+    public FrameCaptureSource captureSource = FrameCaptureSource.Screenshot;
     [SerializeField] private ARCameraManager arCameraManager;
 
     [Tooltip("Cố chọn AR camera configuration có độ phân giải cao nhất trước khi capture OCR.")]
@@ -52,10 +52,10 @@ public class FrameCaptureService : MonoBehaviour
     [SerializeField] private FrameImageEncoding imageEncoding = FrameImageEncoding.Jpeg;
 
     [Tooltip("Hide screen-space UI while taking screenshots. Enabling this can cause visible blink during Translate.")]
-    [SerializeField] private bool hideScreenSpaceCanvasesForScreenshot = false;
+    [SerializeField] private bool hideScreenSpaceCanvasesForScreenshot = true;
 
     [Tooltip("Mask visible app UI in the captured screenshot before sending OCR. This avoids UI text without hiding canvases on screen.")]
-    [SerializeField] private bool maskScreenSpaceUiForScreenshot = true;
+    [SerializeField] private bool maskScreenSpaceUiForScreenshot = false;
 
     [SerializeField] private Color screenshotUiMaskColor = new Color(0.54f, 0.56f, 0.58f, 1f);
 

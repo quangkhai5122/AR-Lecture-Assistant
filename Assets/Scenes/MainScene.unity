@@ -2960,11 +2960,11 @@ MonoBehaviour:
   translationService: {fileID: 968175880}
   arPlaneManager: {fileID: 1716747708}
   useBackendPipeline: 1
-  backendMockMode: 1
+  backendMockMode: 0
   targetLanguage: vi
   backendPipelineMode: 0
-  ocrProvider:
-  translationProvider: mock
+  ocrProvider: google
+  translationProvider: google
   frameCaptureService: {fileID: 1593249883}
   httpPipelineClient: {fileID: 1593249884}
   scanButton: {fileID: 609646638}
@@ -2988,13 +2988,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 825f187574344387b05efe86fcd36b80, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  captureSource: 0
+  captureSource: 2
   arCameraManager: {fileID: 963384810}
   preferHighestCameraResolution: 1
   minRawCameraLongSide: 1280
   imageEncoding: 1
-  hideScreenSpaceCanvasesForScreenshot: 0
-  maskScreenSpaceUiForScreenshot: 1
+  hideScreenSpaceCanvasesForScreenshot: 1
+  maskScreenSpaceUiForScreenshot: 0
   screenshotUiMaskColor: {r: 0.54, g: 0.56, b: 0.58, a: 1}
   jpegQuality: 92
   maxImageDimension: 3072
@@ -3011,8 +3011,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 319be801f9d5447d9bd7d361fa5bc68f, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  backendBaseUrl: http://192.168.1.8:5000
-  endpointUrl: http://192.168.1.8:5000/pipeline/frame
+  backendBaseUrl: http://192.168.1.7:5000
+  useDefaultBackendBaseUrl: 1
+  endpointUrl: http://192.168.1.7:5000/pipeline/frame
   pipelineFramePath: /pipeline/frame
   pipelineAliasPath: /pipeline
   ocrPath: /ocr
@@ -3024,6 +3025,8 @@ MonoBehaviour:
   speechAskTextPath: /speech/ask-text
   healthPath: /health
   timeoutSeconds: 20
+  preferBackendBaseUrlForPipeline: 1
+  useSurfaceCropForOcr: 1
 --- !u!114 &1593249882
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3302,6 +3305,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   raycastManager: {fileID: 0}
+  allowEstimatedPlaneFallback: 1
 --- !u!114 &1716747710
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3346,6 +3350,14 @@ MonoBehaviour:
   raycastController: {fileID: 1716747709}
   surfaceLockController: {fileID: 1716747714}
   subtitleContainer: {fileID: 0}
+  preferDocumentSurfaceMapping: 1
+  allowCenterHomographyFallback: 0
+  preferLockedPlaneOcrProjection: 0
+  showBackendDocumentSurfaceOutline: 1
+  requireLockedSurfaceForOcrProjection: 0
+  allowLegacyPlacementFallbacks: 0
+  autoScreenSpaceFallbackWhenWorldPlacementFails: 1
+  useScreenSpaceTranslationOverlay: 0
 --- !u!114 &1716747713
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3358,8 +3370,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 677486d280c942278675a76c9c135ac7, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  outlineColor: {r: 1, g: 1, b: 1, a: 0.82}
-  lineWidthMeters: 0.008
+  outlineColor: {r: 1, g: 1, b: 1, a: 0.28}
+  lineWidthMeters: 0.0045
   visibleByDefault: 0
 --- !u!114 &1716747714
 MonoBehaviour:
@@ -3377,8 +3389,13 @@ MonoBehaviour:
   raycastController: {fileID: 1716747709}
   labelPlacer: {fileID: 1716747712}
   outlineRenderer: {fileID: 1716747713}
-  disablePlaneDetectionAfterLock: 1
+  disablePlaneDetectionAfterLock: 0
   requestedDetectionMode: 3
+  preferVerticalSurfaces: 1
+  maxVerticalSurfaceNormalY: 0.85
+  usePlaneRotationForLock: 1
+  allowEstimatedSurfaceFallback: 1
+  estimatedSurfaceFallbackDelaySeconds: 0
 --- !u!1 &1807505376
 GameObject:
   m_ObjectHideFlags: 0

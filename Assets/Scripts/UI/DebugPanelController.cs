@@ -71,6 +71,18 @@ public class DebugPanelController : MonoBehaviour
             translatedBuilder.AppendLine($"Provider: OCR={response.provider.ocr}, Trans={response.provider.translation}");
         }
         translatedBuilder.AppendLine($"Frame: {response.frame_id}");
+        translatedBuilder.AppendLine($"Image: {response.image_width}x{response.image_height}");
+        translatedBuilder.AppendLine($"mock_used: {response.mock_used}");
+        if (response.document_surface != null)
+        {
+            translatedBuilder.AppendLine(
+                $"Surface: {response.document_surface.method} ({response.document_surface.confidence:0.00})"
+            );
+        }
+        else
+        {
+            translatedBuilder.AppendLine("Surface: none");
+        }
         translatedBuilder.AppendLine($"Blocks: {response.blocks?.Count ?? 0}");
 
         if (response.blocks != null)

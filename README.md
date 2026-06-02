@@ -132,8 +132,8 @@ Thư mục `Builds/` được ignore. Nếu build không vào Gradle và log bá
 
 `HttpPipelineClient` hiện có default trong code là LAN URL mẫu cho Android, còn `MainScene` hiện đang serialize theo máy build hiện tại:
 
-- `backendBaseUrl = http://192.168.1.8:5000`
-- `endpointUrl = http://192.168.1.8:5000/pipeline/frame`
+- `backendBaseUrl = http://192.168.1.7:5000`
+- `endpointUrl = http://192.168.1.7:5000/pipeline/frame`
 
 Nhưng ở runtime, luồng chính ưu tiên `backendBaseUrl`. Vì vậy:
 
@@ -148,7 +148,7 @@ Có hai cách cấu hình:
 
 Lưu ý: `ButtonController` và `SpeechTranscriptController` vẫn có fallback tự `AddComponent<HttpPipelineClient>()` nếu component bị gỡ khỏi scene, nhưng demo scene hiện đã gắn sẵn component để tránh cấu hình backend URL bị ẩn.
 
-Trong full-feature mode mặc định, `ButtonController` vẫn bật backend mock pipeline để có đường demo ổn định không cần API key. Khi muốn chạy OCR/dịch thật, tắt `backendMockMode` trong Inspector và cấu hình `OCR_PROVIDER` / `TRANSLATION_PROVIDER` ở backend.
+Trong full-feature mode mặc định, `ButtonController` gọi backend thật với `backendMockMode=false`, `ocrProvider=google` và `translationProvider=google`. Backend cần Google Cloud API key có bật Cloud Vision API và Cloud Translation API.
 
 ## Cài đặt backend chi tiết
 
@@ -162,6 +162,33 @@ Copy-Item backend\.env.example backend\.env
 
 Sau đó sửa các biến cần dùng.
 
+### OCR và dịch thật bằng Google APIs
+
+Luồng mặc định dùng Google Cloud Vision để đọc chữ trên slide và Google Cloud Translation để dịch sang tiếng Việt.
+
+1. Bật Cloud Vision API và Cloud Translation API trong Google Cloud project.
+2. Tạo API key có quyền gọi hai API này.
+3. Cấu hình tối thiểu:
+
+```env
+OCR_PROVIDER=google
+TRANSLATION_PROVIDER=google
+GOOGLE_VISION_API_KEY=<your-google-cloud-api-key>
+GOOGLE_TRANSLATE_API_KEY=<your-google-cloud-api-key>
+```
+
+Nếu dùng chung một key cho cả hai API, có thể đặt `GOOGLE_CLOUD_API_KEY` thay cho hai biến riêng.
+
+Test với sample:
+
+```powershell
+python scripts\post_sample_frame.py `
+  --image samples\slides\slide_01.png `
+  --real `
+  --ocr-provider google `
+  --translation-provider google
+```
+
 ### OCR thật bằng Tesseract
 
 Tesseract là lựa chọn local đơn giản nhất cho OCR thật.
@@ -173,7 +200,8 @@ Tesseract là lựa chọn local đơn giản nhất cho OCR thật.
 ```env
 OCR_PROVIDER=tesseract
 OCR_MIN_CONFIDENCE=0.22
-TRANSLATION_PROVIDER=mock
+TRANSLATION_PROVIDER=google
+GOOGLE_TRANSLATE_API_KEY=<your-google-cloud-api-key>
 ```
 
 Test với sample:
@@ -183,7 +211,7 @@ python scripts\post_sample_frame.py `
   --image samples\slides\slide_01.png `
   --real `
   --ocr-provider tesseract `
-  --translation-provider mock
+  --translation-provider google
 ```
 
 ### OCR bằng PaddleOCR

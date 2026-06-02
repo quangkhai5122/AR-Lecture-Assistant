@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+import requests
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from services.errors import PipelineError
@@ -28,7 +29,7 @@ class OCRService:
     returning mock data, so integration mistakes are visible during testing.
     """
 
-    SUPPORTED_PROVIDERS = {"mock", "paddleocr", "tesseract"}
+    SUPPORTED_PROVIDERS = {"mock", "paddleocr", "tesseract", "google"}
 
     def __init__(self):
         self._paddle_ocr: Any | None = None
@@ -104,7 +105,7 @@ class OCRService:
         if force_mock:
             return "mock"
 
-        selected = (provider or os.getenv("OCR_PROVIDER") or "tesseract").strip().lower()
+        selected = (provider or os.getenv("OCR_PROVIDER") or "google").strip().lower()
         if selected not in self.SUPPORTED_PROVIDERS:
             raise PipelineError(
                 f"Unsupported OCR provider '{selected}'. Expected one of: {sorted(self.SUPPORTED_PROVIDERS)}."
@@ -122,6 +123,8 @@ class OCRService:
             return self._paddleocr_blocks(image, width, height)
         if provider == "tesseract":
             return self._tesseract_blocks(image, width, height)
+        if provider == "google":
+            return self._google_vision_blocks(image, width, height)
         raise PipelineError(f"Unsupported OCR provider: {provider}")
 
     def _fallback_provider_for(self, provider: str, error: PipelineError) -> str | None:
@@ -539,6 +542,198 @@ class OCRService:
             })
 
         return blocks
+
+    def _google_vision_blocks(self, image: Image.Image, width: int, height: int) -> list[dict[str, Any]]:
+        api_key = (
+            os.getenv("GOOGLE_VISION_API_KEY")
+            or os.getenv("GOOGLE_CLOUD_VISION_API_KEY")
+            or os.getenv("GOOGLE_CLOUD_API_KEY")
+        )
+        if not api_key:
+            raise PipelineError(
+                "OCR_PROVIDER=google requires GOOGLE_VISION_API_KEY or GOOGLE_CLOUD_API_KEY.",
+                status_code=503,
+                code="ocr_provider_not_configured",
+            )
+
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        image_content = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        request_item: dict[str, Any] = {
+            "image": {"content": image_content},
+            "features": [{"type": os.getenv("GOOGLE_VISION_FEATURE", "DOCUMENT_TEXT_DETECTION")}],
+        }
+        language_hints = [
+            item.strip()
+            for item in os.getenv("GOOGLE_VISION_LANGUAGE_HINTS", "en").split(",")
+            if item.strip()
+        ]
+        if language_hints:
+            request_item["imageContext"] = {"languageHints": language_hints}
+
+        url = os.getenv("GOOGLE_VISION_URL", "https://vision.googleapis.com/v1/images:annotate")
+        timeout = float(os.getenv("GOOGLE_VISION_TIMEOUT_SECONDS", "20"))
+        try:
+            response = requests.post(
+                url,
+                params={"key": api_key},
+                json={"requests": [request_item]},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            raise PipelineError(
+                f"Google Vision OCR request failed: {exc}",
+                status_code=502,
+                code="ocr_provider_failed",
+            ) from exc
+
+        responses = data.get("responses") if isinstance(data, dict) else None
+        if not isinstance(responses, list) or not responses:
+            raise PipelineError(
+                f"Unexpected Google Vision response shape: {data}",
+                status_code=502,
+                code="ocr_provider_bad_response",
+            )
+
+        vision_response = responses[0]
+        if not isinstance(vision_response, dict):
+            raise PipelineError(
+                f"Unexpected Google Vision response shape: {data}",
+                status_code=502,
+                code="ocr_provider_bad_response",
+            )
+        if isinstance(vision_response.get("error"), dict):
+            message = vision_response["error"].get("message") or vision_response["error"]
+            raise PipelineError(
+                f"Google Vision OCR failed: {message}",
+                status_code=502,
+                code="ocr_provider_failed",
+            )
+
+        return (
+            self._google_full_text_blocks(vision_response.get("fullTextAnnotation"), width, height)
+            or self._google_text_annotation_blocks(vision_response.get("textAnnotations"), width, height)
+        )
+
+    def _google_full_text_blocks(
+        self,
+        annotation: Any,
+        image_width: int,
+        image_height: int,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(annotation, dict):
+            return []
+
+        blocks: list[dict[str, Any]] = []
+        pages = annotation.get("pages")
+        if not isinstance(pages, list):
+            return []
+
+        for page in pages:
+            for block in self._safe_list(page.get("blocks") if isinstance(page, dict) else None):
+                for paragraph in self._safe_list(block.get("paragraphs") if isinstance(block, dict) else None):
+                    for word in self._safe_list(paragraph.get("words") if isinstance(paragraph, dict) else None):
+                        text = self._google_word_text(word)
+                        if not text:
+                            continue
+                        bbox = self._google_bounding_poly_to_bbox(
+                            word.get("boundingBox") if isinstance(word, dict) else None,
+                            image_width,
+                            image_height,
+                        )
+                        if bbox is None:
+                            continue
+
+                        blocks.append({
+                            "id": f"ocr_{len(blocks) + 1}",
+                            "text": text,
+                            "bbox": bbox,
+                            "confidence": round(max(0.0, min(1.0, self._safe_float(word.get("confidence"), default=1.0))), 4),
+                        })
+
+        return blocks
+
+    def _google_text_annotation_blocks(
+        self,
+        annotations: Any,
+        image_width: int,
+        image_height: int,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(annotations, list):
+            return []
+
+        blocks: list[dict[str, Any]] = []
+        for annotation in annotations[1:]:
+            if not isinstance(annotation, dict):
+                continue
+            text = str(annotation.get("description", "")).strip()
+            if not text:
+                continue
+            bbox = self._google_bounding_poly_to_bbox(annotation.get("boundingPoly"), image_width, image_height)
+            if bbox is None:
+                continue
+            blocks.append({
+                "id": f"ocr_{len(blocks) + 1}",
+                "text": text,
+                "bbox": bbox,
+                "confidence": self._safe_float(annotation.get("score"), default=1.0),
+            })
+
+        return blocks
+
+    def _google_word_text(self, word: Any) -> str:
+        if not isinstance(word, dict):
+            return ""
+        symbols = word.get("symbols")
+        if not isinstance(symbols, list):
+            return ""
+        return "".join(
+            str(symbol.get("text", ""))
+            for symbol in symbols
+            if isinstance(symbol, dict)
+        ).strip()
+
+    def _google_bounding_poly_to_bbox(
+        self,
+        bounding_poly: Any,
+        image_width: int,
+        image_height: int,
+    ) -> list[int] | None:
+        if not isinstance(bounding_poly, dict):
+            return None
+
+        vertices = bounding_poly.get("vertices") or bounding_poly.get("normalizedVertices")
+        if not isinstance(vertices, list) or not vertices:
+            return None
+
+        points: list[tuple[float, float]] = []
+        normalized = "normalizedVertices" in bounding_poly
+        for vertex in vertices:
+            if not isinstance(vertex, dict):
+                continue
+            x = self._safe_float(vertex.get("x"), default=0.0)
+            y = self._safe_float(vertex.get("y"), default=0.0)
+            if normalized:
+                x *= image_width
+                y *= image_height
+            points.append((x, y))
+
+        if not points:
+            return None
+
+        x1 = self._clamp(round(min(point[0] for point in points)), 0, image_width)
+        y1 = self._clamp(round(min(point[1] for point in points)), 0, image_height)
+        x2 = self._clamp(round(max(point[0] for point in points)), 0, image_width)
+        y2 = self._clamp(round(max(point[1] for point in points)), 0, image_height)
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return [x1, y1, x2, y2]
+
+    def _safe_list(self, value: Any) -> list[Any]:
+        return value if isinstance(value, list) else []
 
     def _min_confidence(self) -> float:
         return max(0.0, min(1.0, self._safe_float(os.getenv("OCR_MIN_CONFIDENCE"), default=0.22)))

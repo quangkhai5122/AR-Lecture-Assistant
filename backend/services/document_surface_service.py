@@ -8,6 +8,11 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageFilter
 
+try:
+    import cv2  # type: ignore
+except Exception:  # pragma: no cover - exercised only when OpenCV is unavailable.
+    cv2 = None
+
 
 @dataclass(frozen=True)
 class SurfaceCrop:
@@ -23,10 +28,12 @@ class SurfaceCrop:
 class DocumentSurfaceService:
     """Detects the board/slide surface and falls back to OCR bbox union.
 
-    The detector intentionally avoids a hard OpenCV dependency so the backend
-    test environment stays lightweight. It uses grayscale smoothing, simple
-    edge energy, and contour-like bounding geometry for the demo path.
+    OpenCV is preferred for real document geometry. If it is unavailable, the
+    service keeps a lightweight edge-energy fallback so mock/demo requests still
+    produce a useful response instead of failing hard.
     """
+
+    MIN_REAL_SURFACE_CONFIDENCE = 0.58
 
     def decode_image(self, image_base64: str | None) -> Image.Image | None:
         if not image_base64:
@@ -53,12 +60,25 @@ class DocumentSurfaceService:
         image_width: int,
         image_height: int,
     ) -> dict[str, Any] | None:
-        contour_surface = self.detect_from_image(image)
+        image_surface = self.detect_from_image(image)
         fallback_surface = self.estimate_from_ocr_blocks(ocr_blocks, image_width, image_height)
 
-        if contour_surface is not None:
-            return contour_surface
-        return fallback_surface
+        if self.is_reliable_real_surface(image_surface):
+            return image_surface
+        return fallback_surface or image_surface
+
+    def is_reliable_real_surface(self, surface: dict[str, Any] | None) -> bool:
+        if surface is None:
+            return False
+
+        confidence = float(surface.get("confidence", 0.0) or 0.0)
+        method = str(surface.get("method", ""))
+        source = str(surface.get("source", ""))
+        return (
+            method in {"contour_quadrilateral", "contour_min_area_quad", "hough_quadrilateral"} and
+            source in {"opencv_contours", "opencv_hough"} and
+            confidence >= self.MIN_REAL_SURFACE_CONFIDENCE
+        )
 
     def detect_from_image(self, image: Image.Image | None) -> dict[str, Any] | None:
         if image is None:
@@ -67,6 +87,16 @@ class DocumentSurfaceService:
         width, height = image.size
         if width <= 0 or height <= 0:
             return None
+
+        if cv2 is not None:
+            opencv_surface = self._detect_with_opencv(image)
+            if opencv_surface is not None:
+                return opencv_surface
+
+        return self._detect_with_edge_energy(image)
+
+    def _detect_with_edge_energy(self, image: Image.Image) -> dict[str, Any] | None:
+        width, height = image.size
 
         grayscale = image.convert("L").filter(ImageFilter.GaussianBlur(radius=1.2))
         pixels = np.asarray(grayscale, dtype=np.float32)
@@ -113,8 +143,187 @@ class DocumentSurfaceService:
                 round(corners[3][0], 2), round(corners[3][1], 2),
             ],
             "confidence": round(confidence, 3),
-            "method": "contour_quadrilateral",
+            "method": "edge_energy_quad",
             "source": "image_edges",
+        }
+
+    def _detect_with_opencv(self, image: Image.Image) -> dict[str, Any] | None:
+        width, height = image.size
+        rgb = np.asarray(image.convert("RGB"))
+        if rgb.size == 0:
+            return None
+
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+        blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+
+        median = float(np.median(blurred))
+        lower = int(max(20, 0.66 * median))
+        upper = int(min(255, max(lower + 20, 1.33 * median)))
+        edges = cv2.Canny(blurred, lower, upper)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+        edges = cv2.dilate(edges, kernel, iterations=1)
+
+        contour_surface = self._detect_quad_from_contours(edges, width, height)
+        if contour_surface is not None:
+            return contour_surface
+
+        return self._detect_quad_from_hough(edges, width, height)
+
+    def _detect_quad_from_contours(self, edges: np.ndarray, width: int, height: int) -> dict[str, Any] | None:
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        candidates: list[tuple[float, np.ndarray, float, str]] = []
+        frame_area = float(max(1, width * height))
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:24]:
+            area = float(cv2.contourArea(contour))
+            area_ratio = area / frame_area
+            if area_ratio < 0.06:
+                continue
+
+            perimeter = float(cv2.arcLength(contour, True))
+            if perimeter <= 0:
+                continue
+
+            approx = cv2.approxPolyDP(contour, 0.025 * perimeter, True)
+            points = approx.reshape(-1, 2).astype(np.float32)
+            method = "contour_quadrilateral"
+            if len(points) != 4:
+                rect = cv2.minAreaRect(contour)
+                points = cv2.boxPoints(rect).astype(np.float32)
+                method = "contour_min_area_quad"
+
+            ordered = self._order_quad_points(points)
+            score = self._score_quad(ordered, width, height, source_area=area)
+            if score <= 0:
+                continue
+
+            confidence = min(0.96, max(0.62, 0.58 + score * 0.35))
+            candidates.append((confidence, ordered, score, method))
+
+        if not candidates:
+            return None
+
+        confidence, corners, _, method = max(candidates, key=lambda item: item[0])
+        return self._surface_response(corners, width, height, confidence, method, "opencv_contours")
+
+    def _detect_quad_from_hough(self, edges: np.ndarray, width: int, height: int) -> dict[str, Any] | None:
+        min_line_length = max(28, int(min(width, height) * 0.18))
+        max_line_gap = max(8, int(min(width, height) * 0.035))
+        lines = cv2.HoughLinesP(
+            edges,
+            rho=1,
+            theta=np.pi / 180,
+            threshold=max(35, int(min(width, height) * 0.18)),
+            minLineLength=min_line_length,
+            maxLineGap=max_line_gap,
+        )
+        if lines is None or len(lines) < 4:
+            return None
+
+        points: list[tuple[float, float]] = []
+        for line in lines[:80]:
+            x1, y1, x2, y2 = [float(value) for value in line[0]]
+            length = float(np.hypot(x2 - x1, y2 - y1))
+            if length < min_line_length:
+                continue
+            points.append((x1, y1))
+            points.append((x2, y2))
+
+        if len(points) < 8:
+            return None
+
+        point_array = np.asarray(points, dtype=np.float32)
+        rect = cv2.minAreaRect(point_array)
+        corners = self._order_quad_points(cv2.boxPoints(rect).astype(np.float32))
+        score = self._score_quad(corners, width, height)
+        if score <= 0:
+            return None
+
+        confidence = min(0.90, max(0.58, 0.54 + score * 0.30))
+        return self._surface_response(corners, width, height, confidence, "hough_quadrilateral", "opencv_hough")
+
+    def _score_quad(
+        self,
+        corners: np.ndarray,
+        image_width: int,
+        image_height: int,
+        source_area: float | None = None,
+    ) -> float:
+        if corners.shape != (4, 2):
+            return 0.0
+
+        contour = corners.reshape(4, 1, 2).astype(np.float32)
+        if not bool(cv2.isContourConvex(contour)):
+            return 0.0
+
+        area = float(abs(cv2.contourArea(contour)))
+        frame_area = float(max(1, image_width * image_height))
+        area_ratio = area / frame_area
+        if area_ratio < 0.05 or area_ratio > 0.98:
+            return 0.0
+
+        top_width = self._distance(tuple(corners[0]), tuple(corners[1]))
+        bottom_width = self._distance(tuple(corners[3]), tuple(corners[2]))
+        left_height = self._distance(tuple(corners[0]), tuple(corners[3]))
+        right_height = self._distance(tuple(corners[1]), tuple(corners[2]))
+        widths = [top_width, bottom_width]
+        heights = [left_height, right_height]
+        if min(widths + heights) < 10:
+            return 0.0
+
+        width_avg = max(1.0, sum(widths) * 0.5)
+        height_avg = max(1.0, sum(heights) * 0.5)
+        aspect = width_avg / height_avg
+        if aspect < 0.25 or aspect > 8.0:
+            return 0.0
+
+        side_balance = min(widths) / max(widths) * min(heights) / max(heights)
+        rect_area = width_avg * height_avg
+        fill_ratio = area / max(1.0, rect_area)
+        source_fill = 1.0 if source_area is None else min(1.0, source_area / max(1.0, area))
+        coverage_score = min(1.0, area_ratio / 0.55)
+        aspect_score = 1.0 if 0.45 <= aspect <= 4.5 else 0.72
+        return max(0.0, min(1.0, coverage_score * 0.45 + side_balance * 0.25 + fill_ratio * 0.20 + source_fill * aspect_score * 0.10))
+
+    def _order_quad_points(self, points: np.ndarray) -> np.ndarray:
+        pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+        if len(pts) != 4:
+            raise ValueError("quad requires exactly four points")
+
+        center = pts.mean(axis=0)
+        angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+        ordered = pts[np.argsort(angles)]
+        start = int(np.argmin(ordered.sum(axis=1)))
+        return np.roll(ordered, -start, axis=0)
+
+    def _surface_response(
+        self,
+        corners: np.ndarray,
+        image_width: int,
+        image_height: int,
+        confidence: float,
+        method: str,
+        source: str,
+    ) -> dict[str, Any]:
+        clamped = [
+            self._clamp_point((float(point[0]), float(point[1])), image_width, image_height)
+            for point in corners
+        ]
+        return {
+            "corners": [
+                round(clamped[0][0], 2), round(clamped[0][1], 2),
+                round(clamped[1][0], 2), round(clamped[1][1], 2),
+                round(clamped[2][0], 2), round(clamped[2][1], 2),
+                round(clamped[3][0], 2), round(clamped[3][1], 2),
+            ],
+            "confidence": round(float(confidence), 3),
+            "method": method,
+            "source": source,
         }
 
     def crop_surface(self, image: Image.Image | None, surface: dict[str, Any] | None) -> SurfaceCrop | None:
@@ -154,7 +363,16 @@ class DocumentSurfaceService:
             [(0, 0), (output_width, 0), (output_width, output_height), (0, output_height)],
             points,
         )
-        if coefficients is None:
+        if cv2 is not None and coefficients is not None:
+            source_points = np.asarray(points, dtype=np.float32)
+            target_points = np.asarray(
+                [(0, 0), (output_width, 0), (output_width, output_height), (0, output_height)],
+                dtype=np.float32,
+            )
+            matrix = cv2.getPerspectiveTransform(source_points, target_points)
+            warped = cv2.warpPerspective(np.asarray(image.convert("RGB")), matrix, (output_width, output_height))
+            crop = Image.fromarray(warped)
+        elif coefficients is None:
             crop = image.crop((x1, y1, x2, y2))
             points = ((float(x1), float(y1)), (float(x2), float(y1)), (float(x2), float(y2)), (float(x1), float(y2)))
         else:
