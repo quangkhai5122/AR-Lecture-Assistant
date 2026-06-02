@@ -2988,7 +2988,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 825f187574344387b05efe86fcd36b80, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  captureSource: 0
+  captureSource: 2
   arCameraManager: {fileID: 963384810}
   preferHighestCameraResolution: 1
   minRawCameraLongSide: 1280

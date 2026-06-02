@@ -182,6 +182,7 @@ public class ButtonController : MonoBehaviour
         {
             step = "1-capture";
             PipelineResponse response = await RunPipelineAsync();
+            debugPanel?.UpdatePipelineResponse(response);
 
             step = "2-count";
             int readableBlocks = labelPlacer != null ? labelPlacer.CountReadableBlocks(response) : CountReadableBlocks(response);
@@ -193,6 +194,10 @@ public class ButtonController : MonoBehaviour
 
             step = "3-place";
             int placed = labelPlacer != null ? labelPlacer.PlacePipelineLabels(response) : 0;
+            if (labelPlacer != null)
+            {
+                debugPanel?.UpdateTrackingState($"Placed {placed}: {labelPlacer.LastPlacementSummary}");
+            }
             if (placed == 0)
             {
                 stateManager.SetError("Chưa ghim được bản dịch. Hãy quét lại mặt bảng/slide.");

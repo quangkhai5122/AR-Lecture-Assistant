@@ -38,7 +38,7 @@ public enum FrameImageEncoding
 public class FrameCaptureService : MonoBehaviour
 {
     [Header("Capture Source")]
-    public FrameCaptureSource captureSource = FrameCaptureSource.Auto;
+    public FrameCaptureSource captureSource = FrameCaptureSource.Screenshot;
     [SerializeField] private ARCameraManager arCameraManager;
 
     [Tooltip("Cố chọn AR camera configuration có độ phân giải cao nhất trước khi capture OCR.")]

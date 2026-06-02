@@ -57,6 +57,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private bool googleLensSingleOverlay = false;
     [SerializeField] private bool useScreenSpaceTranslationOverlay = false;
     [SerializeField] private bool mergeSameLineTextBlocks = true;
+    [SerializeField] private bool allowFallbackPosePlacement = false;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.12f;
     [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.975f, 0.968f, 0.928f, 0.94f);
     [SerializeField] private Color lensOverlayTextColor = new Color(0.09f, 0.10f, 0.11f, 0.98f);
@@ -87,6 +88,7 @@ public class ARLabelPlacer : MonoBehaviour
     public bool UsesScreenSpaceTranslationOverlay => useScreenSpaceTranslationOverlay;
     public string LastPlacementMode { get; private set; } = "none";
     public int LastAnchoredLabelCount { get; private set; }
+    public string LastPlacementSummary { get; private set; } = "none";
 
     /// <summary>
     /// Gọi khi detect plane thành công — lưu pose để dùng khi camera di gần
@@ -182,6 +184,7 @@ public class ARLabelPlacer : MonoBehaviour
         HideSubtitle();
         LastPlacementMode = "none";
         LastAnchoredLabelCount = 0;
+        LastPlacementSummary = "none";
 
         List<TranslationLabelGroup> labelGroups = BuildTranslationLabelGroups(response);
         if (useScreenSpaceTranslationOverlay)
@@ -197,6 +200,8 @@ public class ARLabelPlacer : MonoBehaviour
                 }
             }
 
+            LastAnchoredLabelCount = 0;
+            LastPlacementSummary = $"screen_overlay={overlayPlaced}; anchors bypassed";
             return overlayPlaced;
         }
 
@@ -251,7 +256,7 @@ public class ARLabelPlacer : MonoBehaviour
                 $"screen={Screen.width}x{Screen.height}, " +
                 $"surfaceMapper={(surfaceMapper != null)}, " +
                 $"alignBboxSurface={alignOcrLabelsToDetectedText}, " +
-                $"fallbackPose={hasFallback}"
+                $"fallbackPose={hasFallback}, allowFallbackPosePlacement={allowFallbackPosePlacement}"
             );
         }
 
@@ -334,7 +339,7 @@ public class ARLabelPlacer : MonoBehaviour
             }
 
             // Path C+D: Fallback — dùng center raycast hoặc cached plane pose
-            if (!labelPlaced && hasFallback)
+            if (!labelPlaced && hasFallback && allowFallbackPosePlacement)
             {
                 Pose basePose = fallbackPose.Value;
 
@@ -381,17 +386,20 @@ public class ARLabelPlacer : MonoBehaviour
                     text,
                     null,
                     null,
-                    $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}, fallbackPose={hasFallback}"
+                    $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}, " +
+                    $"fallbackPose={hasFallback}, allowFallbackPosePlacement={allowFallbackPosePlacement}"
                 );
             }
         }
 
         LastAnchoredLabelCount = placed;
         LastPlacementMode = placed > 0 ? "world_anchor" : "none";
+        LastPlacementSummary =
+            $"bbox-surface={bboxSurfacePlaced}, center-homography={centerHomographyPlaced}, " +
+            $"raycast={raycastPlaced}, fallback={fallbackPlaced}, failed={failedPlacement}";
         Debug.Log(
             $"[ARLabelPlacer] Placed {placed} world-space anchored translation label(s). " +
-            $"routes: bbox-surface={bboxSurfacePlaced}, center-homography={centerHomographyPlaced}, " +
-            $"raycast={raycastPlaced}, fallback={fallbackPlaced}, failed={failedPlacement}"
+            $"routes: {LastPlacementSummary}"
         );
         return placed;
     }
