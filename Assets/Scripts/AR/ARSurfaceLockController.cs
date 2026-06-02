@@ -22,8 +22,8 @@ public class ARSurfaceLockController : MonoBehaviour
     [SerializeField] private bool disablePlaneDetectionAfterLock = false;
     [SerializeField] private PlaneDetectionMode requestedDetectionMode =
         PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
-    [SerializeField] private bool preferVerticalSurfaces = false;
-    [SerializeField] private float maxVerticalSurfaceNormalY = 1f;
+    [SerializeField] private bool preferVerticalSurfaces = true;
+    [SerializeField] private float maxVerticalSurfaceNormalY = 0.85f;
     [SerializeField] private bool usePlaneRotationForLock = true;
     [SerializeField] private bool allowEstimatedSurfaceFallback = true;
     [SerializeField] private float estimatedSurfaceFallbackDelaySeconds = 0f;

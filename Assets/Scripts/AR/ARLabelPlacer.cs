@@ -44,10 +44,13 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private bool faceCameraForReadability = true;
     [SerializeField] private bool alignOcrLabelsToDetectedText = true;
     [SerializeField] private bool fitOcrLabelsToPhysicalTextBounds = true;
-    [SerializeField] private bool preferLockedPlaneOcrProjection = true;
+    [SerializeField] private bool preferDocumentSurfaceMapping = true;
+    [SerializeField] private bool allowCenterHomographyFallback = false;
+    [SerializeField] private bool preferLockedPlaneOcrProjection = false;
     [SerializeField] private bool showBackendDocumentSurfaceOutline = false;
     [SerializeField] private bool requireLockedSurfaceForOcrProjection = true;
     [SerializeField] private bool allowLegacyPlacementFallbacks = false;
+    [SerializeField] private bool autoScreenSpaceFallbackWhenWorldPlacementFails = true;
     [SerializeField] private float ocrBoundsPaddingRatio = 0.02f;
     [SerializeField] private float minOcrLabelWidthMeters = 0.025f;
     [SerializeField] private float minOcrLabelHeightMeters = 0.012f;
@@ -63,7 +66,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private bool mergeSameLineTextBlocks = true;
     [SerializeField] private bool allowFallbackPosePlacement = false;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.12f;
-    [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.975f, 0.968f, 0.928f, 0.94f);
+    [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.98f, 0.94f, 0.64f, 0.92f);
     [SerializeField] private Color lensOverlayTextColor = new Color(0.09f, 0.10f, 0.11f, 0.98f);
     [SerializeField] private float lensOverlayWidthExpansion = 1.14f;
     [SerializeField] private float lensOverlayHeightExpansion = 1.08f;
@@ -234,19 +237,31 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         // Pre-cache center raycast — fallback khi per-block raycast miss
-        bool hasCenterHit = raycastController.TryRaycastFromCenter(out Pose centerPose);
-        if (hasCenterHit)
+        Pose? lockedSurfacePose = surfaceLockController != null && surfaceLockController.HasLockedSurface
+            ? surfaceLockController.LockedPose
+            : null;
+
+        Pose centerPose = Pose.identity;
+        bool hasCenterHit = !lockedSurfacePose.HasValue &&
+            raycastController.TryRaycastFromCenter(out centerPose);
+        if (lockedSurfacePose.HasValue)
+        {
+            cachedPlanePose = lockedSurfacePose.Value;
+        }
+        else if (hasCenterHit)
         {
             cachedPlanePose = centerPose; // Lưu để dùng khi raycast miss sau này
         }
 
         // Xác định fallback pose (center hit hoặc cached từ lúc detect plane)
-        Pose? fallbackPose = hasCenterHit ? centerPose : cachedPlanePose;
+        Pose? fallbackPose = lockedSurfacePose ?? (hasCenterHit ? centerPose : cachedPlanePose);
         bool hasFallback = fallbackPose.HasValue;
-        bool canUseLegacyPlacementFallbacks = !preferLockedPlaneOcrProjection || allowLegacyPlacementFallbacks;
+        bool canUseDocumentSurfaceMapping = preferDocumentSurfaceMapping;
+        bool canUseLegacyPlacementFallbacks = allowLegacyPlacementFallbacks;
+        bool shouldBuildSurfaceMapper = canUseDocumentSurfaceMapping || canUseLegacyPlacementFallbacks;
 
         ARDocumentSurfaceMapper surfaceMapper = null;
-        if (canUseLegacyPlacementFallbacks)
+        if (shouldBuildSurfaceMapper)
         {
             surfaceMapper = ARDocumentSurfaceMapper.TryCreate(
                 response,
@@ -267,7 +282,9 @@ public class ARLabelPlacer : MonoBehaviour
         int centerHomographyPlaced = 0;
         int raycastPlaced = 0;
         int fallbackPlaced = 0;
+        int screenFallbackPlaced = 0;
         int failedPlacement = 0;
+        List<TranslationLabelGroup> screenFallbackGroups = new List<TranslationLabelGroup>();
 
         if (logAnchorPlacementDiagnostics)
         {
@@ -276,6 +293,8 @@ public class ARLabelPlacer : MonoBehaviour
                 $"responseImage={response.image_width}x{response.image_height}, " +
                 $"screen={Screen.width}x{Screen.height}, " +
                 $"surfaceMapper={(surfaceMapper != null)}, " +
+                $"documentSurfaceMapping={canUseDocumentSurfaceMapping}, " +
+                $"centerHomographyFallback={allowCenterHomographyFallback}, " +
                 $"lockedPlaneProjection={preferLockedPlaneOcrProjection}, " +
                 $"requireLockedSurface={requireLockedSurfaceForOcrProjection}, " +
                 $"legacyFallbacks={canUseLegacyPlacementFallbacks}, " +
@@ -295,29 +314,6 @@ public class ARLabelPlacer : MonoBehaviour
             bool labelPlaced = false;
 
             string lockedPlaneProjectionFailureReason = null;
-            if (preferLockedPlaneOcrProjection &&
-                TryBuildLockedPlaneOcrPlacement(
-                    group,
-                    response,
-                    fallbackPose,
-                    out SurfaceLabelPlacement lockedPlacement,
-                    out ARPlane lockedPlane,
-                    out lockedPlaneProjectionFailureReason
-                ))
-            {
-                labelPlaced = CreateFixedLabel(text, lockedPlacement, lockedPlane);
-                if (labelPlaced)
-                {
-                    lockedPlaneBboxPlaced++;
-                    RegisterPlacedLabel(group.ScreenPoint, text);
-                    LogAnchorPlacementRoute("locked-plane-bbox", groupIndex, group, text, lockedPlacement.Pose, lockedPlacement.SizeMeters);
-                }
-                else if (string.IsNullOrEmpty(lockedPlaneProjectionFailureReason))
-                {
-                    lockedPlaneProjectionFailureReason = "create-label-failed-after-locked-plane-projection";
-                }
-            }
-
             // Path A: SurfaceMapper (homography). Prefer the whole OCR bbox, not only
             // the center point, so the label can fit the detected text bounds.
             Vector2 surfaceImagePoint = preserveOcrAnchorPositions
@@ -325,13 +321,9 @@ public class ARLabelPlacer : MonoBehaviour
                 : ResolveSurfaceMappedImagePoint(group, resolvedScreenPoint, response);
             string bboxSurfaceFailureReason = null;
             SurfaceLabelPlacement placement = null;
-            if (labelPlaced)
+            if (!canUseDocumentSurfaceMapping)
             {
-                bboxSurfaceFailureReason = "locked-plane-projection-succeeded";
-            }
-            else if (!canUseLegacyPlacementFallbacks)
-            {
-                bboxSurfaceFailureReason = "legacy-fallbacks-disabled";
+                bboxSurfaceFailureReason = "document-surface-mapping-disabled";
             }
             else if (surfaceMapper == null)
             {
@@ -357,7 +349,8 @@ public class ARLabelPlacer : MonoBehaviour
             }
 
             if (!labelPlaced &&
-                canUseLegacyPlacementFallbacks &&
+                allowCenterHomographyFallback &&
+                canUseDocumentSurfaceMapping &&
                 surfaceMapper != null &&
                 surfaceMapper.TryMapImagePointToPose(surfaceImagePoint, out Pose surfacePose))
             {
@@ -383,6 +376,38 @@ public class ARLabelPlacer : MonoBehaviour
                         null,
                         $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}"
                     );
+                }
+            }
+
+            if (!labelPlaced &&
+                preferLockedPlaneOcrProjection &&
+                TryBuildLockedPlaneOcrPlacement(
+                    group,
+                    response,
+                    fallbackPose,
+                    out SurfaceLabelPlacement lockedPlacement,
+                    out ARPlane lockedPlane,
+                    out lockedPlaneProjectionFailureReason
+                ))
+            {
+                labelPlaced = CreateFixedLabel(text, lockedPlacement, lockedPlane);
+                if (labelPlaced)
+                {
+                    lockedPlaneBboxPlaced++;
+                    RegisterPlacedLabel(group.ScreenPoint, text);
+                    LogAnchorPlacementRoute(
+                        "locked-plane-bbox",
+                        groupIndex,
+                        group,
+                        text,
+                        lockedPlacement.Pose,
+                        lockedPlacement.SizeMeters,
+                        $"bboxSurfaceFail={bboxSurfaceFailureReason ?? "not-attempted"}"
+                    );
+                }
+                else if (string.IsNullOrEmpty(lockedPlaneProjectionFailureReason))
+                {
+                    lockedPlaneProjectionFailureReason = "create-label-failed-after-locked-plane-projection";
                 }
             }
 
@@ -449,6 +474,10 @@ public class ARLabelPlacer : MonoBehaviour
             else
             {
                 failedPlacement++;
+                if (autoScreenSpaceFallbackWhenWorldPlacementFails)
+                {
+                    screenFallbackGroups.Add(group);
+                }
                 LogAnchorPlacementRoute(
                     "not-placed",
                     groupIndex,
@@ -464,16 +493,38 @@ public class ARLabelPlacer : MonoBehaviour
             }
         }
 
+        if (autoScreenSpaceFallbackWhenWorldPlacementFails && screenFallbackGroups.Count > 0)
+        {
+            foreach (TranslationLabelGroup group in screenFallbackGroups)
+            {
+                if (CreateScreenOverlayLabel(group))
+                {
+                    screenFallbackPlaced++;
+                }
+            }
+
+            if (screenFallbackPlaced > 0)
+            {
+                Debug.LogWarning(
+                    $"[ARLabelPlacer] Used screen-space fallback for {screenFallbackPlaced} translation label(s) " +
+                    "because AR document/world placement failed for those blocks."
+                );
+            }
+        }
+
         LastAnchoredLabelCount = placed;
-        LastPlacementMode = placed > 0 ? "world_anchor" : "none";
+        LastPlacementMode = placed > 0
+            ? (screenFallbackPlaced > 0 ? "world_anchor+screen_overlay_fallback" : "world_anchor")
+            : (screenFallbackPlaced > 0 ? "screen_overlay_fallback" : "none");
         LastPlacementSummary =
             $"locked-plane-bbox={lockedPlaneBboxPlaced}, bbox-surface={bboxSurfacePlaced}, center-homography={centerHomographyPlaced}, " +
-            $"raycast={raycastPlaced}, fallback={fallbackPlaced}, failed={failedPlacement}";
+            $"raycast={raycastPlaced}, fallback={fallbackPlaced}, screen-fallback={screenFallbackPlaced}, failed={failedPlacement}";
         Debug.Log(
-            $"[ARLabelPlacer] Placed {placed} world-space anchored translation label(s). " +
+            $"[ARLabelPlacer] Placed {placed} world-space anchored translation label(s), " +
+            $"{screenFallbackPlaced} screen fallback label(s). " +
             $"routes: {LastPlacementSummary}"
         );
-        return placed;
+        return placed + screenFallbackPlaced;
     }
 
     public int CountReadableBlocks(PipelineResponse response)

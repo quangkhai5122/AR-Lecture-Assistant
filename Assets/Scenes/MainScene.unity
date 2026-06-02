@@ -3026,6 +3026,7 @@ MonoBehaviour:
   healthPath: /health
   timeoutSeconds: 20
   preferBackendBaseUrlForPipeline: 1
+  useSurfaceCropForOcr: 1
 --- !u!114 &1593249882
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3349,6 +3350,14 @@ MonoBehaviour:
   raycastController: {fileID: 1716747709}
   surfaceLockController: {fileID: 1716747714}
   subtitleContainer: {fileID: 0}
+  preferDocumentSurfaceMapping: 1
+  allowCenterHomographyFallback: 0
+  preferLockedPlaneOcrProjection: 0
+  showBackendDocumentSurfaceOutline: 1
+  requireLockedSurfaceForOcrProjection: 0
+  allowLegacyPlacementFallbacks: 0
+  autoScreenSpaceFallbackWhenWorldPlacementFails: 1
+  useScreenSpaceTranslationOverlay: 0
 --- !u!114 &1716747713
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3382,8 +3391,8 @@ MonoBehaviour:
   outlineRenderer: {fileID: 1716747713}
   disablePlaneDetectionAfterLock: 0
   requestedDetectionMode: 3
-  preferVerticalSurfaces: 0
-  maxVerticalSurfaceNormalY: 1
+  preferVerticalSurfaces: 1
+  maxVerticalSurfaceNormalY: 0.85
   usePlaneRotationForLock: 1
   allowEstimatedSurfaceFallback: 1
   estimatedSurfaceFallbackDelaySeconds: 0

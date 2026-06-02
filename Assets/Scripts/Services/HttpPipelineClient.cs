@@ -34,6 +34,8 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
     public int timeoutSeconds = 20;
     [Tooltip("Keep this enabled so stale serialized endpointUrl values cannot override backendBaseUrl in Android builds.")]
     public bool preferBackendBaseUrlForPipeline = true;
+    [Tooltip("Run OCR on the detected board/slide crop, then map OCR boxes back to the original frame.")]
+    public bool useSurfaceCropForOcr = true;
 
     private void Awake()
     {
@@ -337,7 +339,8 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
             image_width = imageWidth,
             image_height = imageHeight,
             ocr_provider = ocrProvider,
-            translation_provider = translationProvider
+            translation_provider = translationProvider,
+            use_surface_crop_for_ocr = useSurfaceCropForOcr
         };
     }
 

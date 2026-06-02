@@ -5,6 +5,10 @@ using UnityEngine.XR.ARSubsystems;
 
 public sealed class ARDocumentSurfaceMapper
 {
+    private const float MaxProjectedSurfaceSideMeters = 6.0f;
+    private const float MaxProjectedSurfaceAreaMeters = 18.0f;
+    private const float MaxProjectedSurfaceAspectRatio = 12.0f;
+
     private readonly ARDocumentSurface surface;
     private readonly double[] imageToUvHomography;
 
@@ -45,50 +49,36 @@ public sealed class ARDocumentSurfaceMapper
         }
 
         Vector2[] screenCorners = new Vector2[4];
-        Vector3[] worldCorners = new Vector3[4];
-        Pose planePose = fallbackPlanePose ?? Pose.identity;
-        Quaternion rotation = fallbackPlanePose?.rotation ?? Quaternion.identity;
-        ARPlane commonPlane = fallbackPlane;
-        bool planeMismatch = false;
-        bool hasRaycastHit = false;
-
         for (int i = 0; i < imageCorners.Length; i++)
         {
-            Vector2 screenPoint = imageToScreenPoint(imageCorners[i], response);
-            screenCorners[i] = screenPoint;
-            if (raycastController.TryRaycastHit(screenPoint, out ARRaycastHit hit))
-            {
-                worldCorners[i] = hit.pose.position;
-                if (!hasRaycastHit)
-                {
-                    planePose = hit.pose;
-                    rotation = hit.pose.rotation;
-                    hasRaycastHit = true;
-                }
+            screenCorners[i] = imageToScreenPoint(imageCorners[i], response);
+        }
 
-                ARPlane hitPlane = hit.trackable as ARPlane;
-                if (!planeMismatch && hitPlane != null)
-                {
-                    if (commonPlane == null)
-                    {
-                        commonPlane = hitPlane;
-                    }
-                    else if (commonPlane.trackableId != hitPlane.trackableId)
-                    {
-                        commonPlane = null;
-                        planeMismatch = true;
-                    }
-                }
-            }
-            else if (fallbackPlanePose.HasValue &&
-                     TryProjectScreenPointToPlane(screenPoint, fallbackPlanePose.Value, out Vector3 projectedPosition))
-            {
-                worldCorners[i] = projectedPosition;
-            }
-            else
+        Vector3[] worldCorners;
+        Pose planePose;
+        Quaternion rotation;
+        ARPlane commonPlane;
+        if (fallbackPlanePose.HasValue)
+        {
+            planePose = fallbackPlanePose.Value;
+            rotation = planePose.rotation;
+            commonPlane = fallbackPlane;
+            if (!TryProjectScreenCornersToPlane(screenCorners, planePose, out worldCorners))
             {
                 return null;
             }
+        }
+        else if (TryResolveProjectionPlane(screenCorners, raycastController, out planePose, out commonPlane))
+        {
+            rotation = planePose.rotation;
+            if (!TryProjectScreenCornersToPlane(screenCorners, planePose, out worldCorners))
+            {
+                return null;
+            }
+        }
+        else
+        {
+            return null;
         }
 
         if (!HasUsableQuad(worldCorners))
@@ -102,7 +92,7 @@ public sealed class ARDocumentSurfaceMapper
             worldCorners,
             planePose,
             rotation,
-            planeMismatch ? null : commonPlane,
+            commonPlane,
             response.document_surface.confidence,
             response.document_surface.method
         );
@@ -278,6 +268,87 @@ public sealed class ARDocumentSurfaceMapper
         return true;
     }
 
+    private static bool TryProjectScreenCornersToPlane(
+        Vector2[] screenCorners,
+        Pose planePose,
+        out Vector3[] worldCorners
+    )
+    {
+        worldCorners = new Vector3[4];
+        if (screenCorners == null || screenCorners.Length < 4)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < 4; i++)
+        {
+            if (!TryProjectScreenPointToPlane(screenCorners[i], planePose, out worldCorners[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryResolveProjectionPlane(
+        Vector2[] screenCorners,
+        ARRaycastController raycastController,
+        out Pose planePose,
+        out ARPlane plane
+    )
+    {
+        planePose = Pose.identity;
+        plane = null;
+        if (screenCorners == null || screenCorners.Length < 4 || raycastController == null)
+        {
+            return false;
+        }
+
+        Vector2 center = Vector2.zero;
+        for (int i = 0; i < 4; i++)
+        {
+            center += screenCorners[i];
+        }
+        center *= 0.25f;
+
+        if (TryResolvePlaneFromScreenPoint(center, raycastController, out planePose, out plane))
+        {
+            return true;
+        }
+
+        for (int i = 0; i < 4; i++)
+        {
+            if (TryResolvePlaneFromScreenPoint(screenCorners[i], raycastController, out planePose, out plane))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryResolvePlaneFromScreenPoint(
+        Vector2 screenPoint,
+        ARRaycastController raycastController,
+        out Pose planePose,
+        out ARPlane plane
+    )
+    {
+        planePose = Pose.identity;
+        plane = null;
+        if (raycastController == null ||
+            !raycastController.TryRaycastHit(screenPoint, out ARRaycastHit hit))
+        {
+            return false;
+        }
+
+        plane = hit.trackable as ARPlane;
+        Quaternion rotation = plane != null ? plane.transform.rotation : hit.pose.rotation;
+        planePose = new Pose(hit.pose.position, rotation);
+        return true;
+    }
+
     private static bool HasUsableQuad(Vector2[] corners)
     {
         if (corners == null || corners.Length < 4) return false;
@@ -297,10 +368,32 @@ public sealed class ARDocumentSurfaceMapper
     {
         if (corners == null || corners.Length < 4) return false;
 
+        float topWidth = (corners[1] - corners[0]).magnitude;
+        float bottomWidth = (corners[2] - corners[3]).magnitude;
+        float leftHeight = (corners[3] - corners[0]).magnitude;
+        float rightHeight = (corners[2] - corners[1]).magnitude;
+        float width = Mathf.Max(topWidth, bottomWidth);
+        float height = Mathf.Max(leftHeight, rightHeight);
+        if (width <= 0.005f || height <= 0.005f)
+        {
+            return false;
+        }
+
+        if (width > MaxProjectedSurfaceSideMeters || height > MaxProjectedSurfaceSideMeters)
+        {
+            return false;
+        }
+
+        float aspect = width / Mathf.Max(0.0001f, height);
+        if (aspect > MaxProjectedSurfaceAspectRatio || aspect < 1f / MaxProjectedSurfaceAspectRatio)
+        {
+            return false;
+        }
+
         float area =
             Vector3.Cross(corners[1] - corners[0], corners[2] - corners[0]).magnitude * 0.5f +
             Vector3.Cross(corners[2] - corners[0], corners[3] - corners[0]).magnitude * 0.5f;
-        return area > 0.0001f;
+        return area > 0.0001f && area <= MaxProjectedSurfaceAreaMeters;
     }
 
     private static bool SolveLinearSystem(double[,] matrix, double[] values, out double[] solution)

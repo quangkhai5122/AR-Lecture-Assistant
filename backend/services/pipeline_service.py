@@ -41,11 +41,15 @@ class PipelineService:
         use_surface_crop_for_ocr = payload.get("use_surface_crop_for_ocr") is True
 
         ocr_start = time.perf_counter()
+        surface_for_ocr = contour_surface if (
+            use_surface_crop_for_ocr and
+            self.document_surface_service.is_reliable_real_surface(contour_surface)
+        ) else None
         ocr_result = self._recognize_with_optional_surface_crop(
             payload,
             force_mock,
             surface_image,
-            contour_surface if use_surface_crop_for_ocr else None,
+            surface_for_ocr,
         )
         ocr_ms = self._elapsed_ms(ocr_start)
 
@@ -58,13 +62,16 @@ class PipelineService:
         )
         translation_ms = self._elapsed_ms(translation_start)
 
-        document_surface = self.document_surface_service.estimate_from_ocr_blocks(
+        ocr_union_surface = self.document_surface_service.estimate_from_ocr_blocks(
             ocr_result.blocks,
             ocr_result.image_width,
             ocr_result.image_height,
-        ) or contour_surface
+        )
+        document_surface = self._select_document_surface(contour_surface, ocr_union_surface)
 
         warnings = [*ocr_result.warnings, *translation_result.warnings]
+        if contour_surface is not None and document_surface is ocr_union_surface:
+            warnings.append("Detected image surface was not a reliable OpenCV quadrilateral; using OCR bbox union.")
         if translation_result.cache_hits:
             warnings.append(f"translation cache hits: {translation_result.cache_hits}")
 
@@ -212,6 +219,19 @@ class PipelineService:
         image_height: int,
     ) -> dict[str, Any] | None:
         return self.document_surface_service.estimate_from_ocr_blocks(blocks, image_width, image_height)
+
+    def _select_document_surface(
+        self,
+        detected_surface: dict[str, Any] | None,
+        ocr_union_surface: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if detected_surface is None:
+            return ocr_union_surface
+
+        if self.document_surface_service.is_reliable_real_surface(detected_surface):
+            return detected_surface
+
+        return ocr_union_surface or detected_surface
 
     def translate_preserving_formula(
         self,

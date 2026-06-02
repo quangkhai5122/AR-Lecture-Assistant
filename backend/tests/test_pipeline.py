@@ -444,8 +444,8 @@ def test_document_surface_detects_quadrilateral():
     surface = service.detect(image, [], 320, 220)
 
     assert surface is not None
-    assert surface["method"] == "contour_quadrilateral"
-    assert surface["source"] == "image_edges"
+    assert surface["method"] in {"contour_quadrilateral", "contour_min_area_quad", "hough_quadrilateral"}
+    assert surface["source"] in {"opencv_contours", "opencv_hough"}
     assert len(surface["corners"]) == 8
     assert 0 <= surface["confidence"] <= 1
     assert surface["corners"][0] <= 48
@@ -474,6 +474,23 @@ def test_document_surface_returns_none_for_blank_image():
 
     assert service.detect(blank, [], 320, 220) is None
 
+
+def test_pipeline_prefers_ocr_union_over_non_opencv_edge_fallback():
+    service = PipelineService()
+    edge_surface = {
+        "corners": [20, 20, 300, 20, 300, 200, 20, 200],
+        "confidence": 0.9,
+        "method": "edge_energy_quad",
+        "source": "image_edges",
+    }
+    ocr_surface = {
+        "corners": [80, 60, 240, 60, 240, 140, 80, 140],
+        "confidence": 0.52,
+        "method": "ocr_bbox_union",
+        "source": "ocr_blocks",
+    }
+
+    assert service._select_document_surface(edge_surface, ocr_surface) is ocr_surface
 
 def test_document_surface_crop_maps_ocr_boxes_to_original_image():
     service = DocumentSurfaceService()
@@ -597,7 +614,7 @@ def test_pipeline_real_ocr_uses_original_frame_by_default(monkeypatch):
     assert seen_sizes[0] == (320, 220)
     assert result["image_width"] == 320
     assert result["image_height"] == 220
-    assert result["document_surface"]["method"] == "ocr_bbox_union"
+    assert result["document_surface"]["method"] in {"contour_quadrilateral", "contour_min_area_quad", "hough_quadrilateral"}
     assert result["blocks"][0]["bbox"] == [8, 10, 120, 32]
     assert not any("surface crop" in warning for warning in result["warnings"])
 
@@ -639,7 +656,7 @@ def test_pipeline_runs_real_ocr_on_surface_crop_when_requested(monkeypatch):
     assert seen_sizes[0][1] < 220
     assert result["image_width"] == 320
     assert result["image_height"] == 220
-    assert result["document_surface"]["method"] == "ocr_bbox_union"
+    assert result["document_surface"]["method"] in {"contour_quadrilateral", "contour_min_area_quad", "hough_quadrilateral"}
     assert result["blocks"][0]["bbox"][0] > 8
     assert any("surface crop" in warning for warning in result["warnings"])
 
