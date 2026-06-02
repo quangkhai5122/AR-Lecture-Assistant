@@ -1,4 +1,5 @@
 // ARRaycastController.cs
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
@@ -7,19 +8,18 @@ using UnityEngine.XR.ARSubsystems;
 public class ARRaycastController : MonoBehaviour
 {
     [SerializeField] private ARRaycastManager raycastManager;
+    [SerializeField] private bool allowEstimatedPlaneFallback = false;
 
-    private List<ARRaycastHit> hits = new List<ARRaycastHit>();
+    private readonly List<ARRaycastHit> hits = new List<ARRaycastHit>();
 
-    // Mở rộng trackable types: polygon + bounds + estimated → hit rate tăng mạnh
-    private const TrackableType AllPlaneTypes =
+    private const TrackableType ExactPlaneTypes =
         TrackableType.PlaneWithinPolygon |
-        TrackableType.PlaneWithinBounds |
+        TrackableType.PlaneWithinBounds;
+
+    private const TrackableType EstimatedPlaneTypes =
+        ExactPlaneTypes |
         TrackableType.PlaneEstimated;
 
-    /// <summary>
-    /// Thực hiện raycast từ vị trí screen vào các plane đã detect
-    /// Thử polygon trước (chính xác nhất), rồi fallback sang bounds + estimated
-    /// </summary>
     public bool TryRaycast(Vector2 screenPosition, out Pose hitPose)
     {
         hitPose = Pose.identity;
@@ -35,32 +35,60 @@ public class ARRaycastController : MonoBehaviour
 
     public bool TryRaycastHit(Vector2 screenPosition, out ARRaycastHit hit)
     {
+        return TryRaycastHit(screenPosition, out hit, null);
+    }
+
+    public bool TryRaycastHit(
+        Vector2 screenPosition,
+        out ARRaycastHit hit,
+        Predicate<ARRaycastHit> hitFilter
+    )
+    {
         hit = default;
 
         if (raycastManager == null)
-            raycastManager = FindAnyObjectByType<ARRaycastManager>();
-        if (raycastManager == null) return false;
-
-        // Thử chính xác nhất trước
-        if (raycastManager.Raycast(screenPosition, hits, TrackableType.PlaneWithinPolygon))
         {
-            hit = hits[0];
+            raycastManager = FindAnyObjectByType<ARRaycastManager>();
+        }
+
+        if (raycastManager == null)
+        {
+            return false;
+        }
+
+        if (raycastManager.Raycast(screenPosition, hits, TrackableType.PlaneWithinPolygon) &&
+            TrySelectHit(hitFilter, out hit))
+        {
             return true;
         }
 
-        // Fallback: bounds + estimated (phạm vi lớn hơn)
-        if (raycastManager.Raycast(screenPosition, hits, AllPlaneTypes))
+        TrackableType fallbackTypes = allowEstimatedPlaneFallback
+            ? EstimatedPlaneTypes
+            : ExactPlaneTypes;
+        if (raycastManager.Raycast(screenPosition, hits, fallbackTypes) &&
+            TrySelectHit(hitFilter, out hit))
         {
-            hit = hits[0];
             return true;
         }
 
         return false;
     }
 
-    /// <summary>
-    /// Raycast từ trung tâm màn hình
-    /// </summary>
+    private bool TrySelectHit(Predicate<ARRaycastHit> hitFilter, out ARRaycastHit hit)
+    {
+        foreach (ARRaycastHit candidate in hits)
+        {
+            if (hitFilter == null || hitFilter(candidate))
+            {
+                hit = candidate;
+                return true;
+            }
+        }
+
+        hit = default;
+        return false;
+    }
+
     public bool TryRaycastFromCenter(out Pose hitPose)
     {
         Vector2 center = new Vector2(Screen.width / 2f, Screen.height / 2f);
@@ -69,8 +97,17 @@ public class ARRaycastController : MonoBehaviour
 
     public bool TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit)
     {
+        return TryRaycastFromCenter(out hitPose, out hit, null);
+    }
+
+    public bool TryRaycastFromCenter(
+        out Pose hitPose,
+        out ARRaycastHit hit,
+        Predicate<ARRaycastHit> hitFilter
+    )
+    {
         Vector2 center = new Vector2(Screen.width / 2f, Screen.height / 2f);
-        if (TryRaycastHit(center, out hit))
+        if (TryRaycastHit(center, out hit, hitFilter))
         {
             hitPose = hit.pose;
             return true;

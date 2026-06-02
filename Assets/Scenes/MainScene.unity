@@ -3378,7 +3378,10 @@ MonoBehaviour:
   labelPlacer: {fileID: 1716747712}
   outlineRenderer: {fileID: 1716747713}
   disablePlaneDetectionAfterLock: 1
-  requestedDetectionMode: 3
+  requestedDetectionMode: 2
+  preferVerticalSurfaces: 1
+  maxVerticalSurfaceNormalY: 0.35
+  usePlaneRotationForLock: 1
 --- !u!1 &1807505376
 GameObject:
   m_ObjectHideFlags: 0

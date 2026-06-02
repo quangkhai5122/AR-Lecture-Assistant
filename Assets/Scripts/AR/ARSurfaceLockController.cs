@@ -20,8 +20,10 @@ public class ARSurfaceLockController : MonoBehaviour
     [SerializeField] private ARLabelPlacer labelPlacer;
     [SerializeField] private ARSurfaceOutlineRenderer outlineRenderer;
     [SerializeField] private bool disablePlaneDetectionAfterLock = true;
-    [SerializeField] private PlaneDetectionMode requestedDetectionMode =
-        PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
+    [SerializeField] private PlaneDetectionMode requestedDetectionMode = PlaneDetectionMode.Vertical;
+    [SerializeField] private bool preferVerticalSurfaces = true;
+    [SerializeField] private float maxVerticalSurfaceNormalY = 0.35f;
+    [SerializeField] private bool usePlaneRotationForLock = true;
 
     public event Action<ARSurfaceLockState> TrackingStateChanged;
     public event Action<Pose> SurfaceLocked;
@@ -60,7 +62,8 @@ public class ARSurfaceLockController : MonoBehaviour
             return;
         }
 
-        if (raycastController != null && raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit))
+        if (raycastController != null &&
+            raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit, IsAcceptableRaycastHit))
         {
             TransitionTo(ARSurfaceLockState.PlaneFound);
             LockSurface(hit);
@@ -90,14 +93,15 @@ public class ARSurfaceLockController : MonoBehaviour
     {
         ResolveDependencies();
 
-        if (raycastController != null && raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit))
+        if (raycastController != null &&
+            raycastController.TryRaycastFromCenter(out Pose hitPose, out ARRaycastHit hit, IsAcceptableRaycastHit))
         {
             TransitionTo(ARSurfaceLockState.PlaneFound);
             LockSurface(hit, plane);
             return;
         }
 
-        if (plane != null)
+        if (plane != null && IsAcceptableSurface(plane, new Pose(plane.transform.position, plane.transform.rotation)))
         {
             TransitionTo(ARSurfaceLockState.PlaneFound);
             LockSurface(new Pose(plane.transform.position, plane.transform.rotation), plane);
@@ -117,13 +121,26 @@ public class ARSurfaceLockController : MonoBehaviour
     private void LockSurface(ARRaycastHit hit, ARPlane fallbackPlane)
     {
         ARPlane hitPlane = hit.trackable as ARPlane ?? ResolvePlane(hit.trackableId) ?? fallbackPlane;
-        LockSurface(hit.pose, hitPlane);
+        if (!IsAcceptableSurface(hitPlane, hit.pose))
+        {
+            Debug.LogWarning("[ARSurfaceLockController] Ignored non-vertical or unstable surface lock candidate.");
+            return;
+        }
+
+        LockSurface(BuildStableSurfacePose(hit.pose, hitPlane), hitPlane);
     }
 
     public void LockSurface(Pose pose, ARPlane plane)
     {
         ResolveDependencies();
         plane = plane != null ? plane : ResolveNearestPlane(pose.position);
+        if (!IsAcceptableSurface(plane, pose))
+        {
+            Debug.LogWarning("[ARSurfaceLockController] Ignored non-vertical or unstable surface pose.");
+            return;
+        }
+
+        pose = BuildStableSurfacePose(pose, plane);
         lockedPose = pose;
         lockedPlane = plane;
         labelPlacer?.CachePlanePose(pose);
@@ -285,6 +302,41 @@ public class ARSurfaceLockController : MonoBehaviour
         }
 
         return nearest;
+    }
+
+    private bool IsAcceptableRaycastHit(ARRaycastHit hit)
+    {
+        ARPlane hitPlane = hit.trackable as ARPlane ?? ResolvePlane(hit.trackableId);
+        return IsAcceptableSurface(hitPlane, hit.pose);
+    }
+
+    private bool IsAcceptableSurface(ARPlane plane, Pose pose)
+    {
+        if (!preferVerticalSurfaces)
+        {
+            return true;
+        }
+
+        Vector3 normal = plane != null
+            ? plane.transform.up
+            : pose.rotation * Vector3.up;
+        if (normal.sqrMagnitude < 0.000001f)
+        {
+            return false;
+        }
+
+        normal.Normalize();
+        return Mathf.Abs(normal.y) <= Mathf.Clamp01(maxVerticalSurfaceNormalY);
+    }
+
+    private Pose BuildStableSurfacePose(Pose pose, ARPlane plane)
+    {
+        if (!usePlaneRotationForLock || plane == null)
+        {
+            return pose;
+        }
+
+        return new Pose(pose.position, plane.transform.rotation);
     }
 
     private static void SetPlaneVisualsVisible(ARPlane plane, bool visible)
