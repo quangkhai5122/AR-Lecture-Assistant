@@ -11,7 +11,7 @@ using UnityEngine.Networking;
 /// </summary>
 public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 {
-    public const string DefaultAndroidLanBackendUrl = "http://10.11.238.27:5000";
+    public const string DefaultAndroidLanBackendUrl = "http://192.168.1.7:5000";
     private const string AndroidLanBackendUrl = DefaultAndroidLanBackendUrl;
     private const string DefaultLoopbackBaseUrl = "http://127.0.0.1:5000";
     private const string DefaultLoopbackFrameUrl = "http://127.0.0.1:5000/pipeline/frame";
