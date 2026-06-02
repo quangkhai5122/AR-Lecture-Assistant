@@ -130,6 +130,17 @@ public class ARLabelPlacer : MonoBehaviour
 
     private bool TryPlaceFixedLabel(string translatedText, Vector2 screenPos, bool allowOverlapNudge)
     {
+        return TryPlaceFixedLabel(translatedText, screenPos, allowOverlapNudge, Vector2.zero, false);
+    }
+
+    private bool TryPlaceFixedLabel(
+        string translatedText,
+        Vector2 screenPos,
+        bool allowOverlapNudge,
+        Vector2 targetScreenSize,
+        bool alignToSurface
+    )
+    {
         if (fixedLabelPrefab == null)
         {
             Debug.LogWarning("[ARLabelPlacer] fixedLabelPrefab is null.");
@@ -167,7 +178,7 @@ public class ARLabelPlacer : MonoBehaviour
 
         if (hit)
         {
-            if (!CreateFixedLabel(translatedText, raycastHit)) return false;
+            if (!CreateFixedLabel(translatedText, raycastHit, targetScreenSize, alignToSurface)) return false;
             RegisterPlacedLabel(placedScreenPos, translatedText);
             return true;
         }
@@ -304,7 +315,14 @@ public class ARLabelPlacer : MonoBehaviour
                 surfaceMapper != null &&
                 surfaceMapper.TryMapImagePointToPose(surfaceImagePoint, out Pose surfacePose))
             {
-                labelPlaced = CreateFixedLabel(text, surfacePose, group.ScreenSize, surfaceMapper.Surface.Plane);
+                SurfaceLabelPlacement centerPlacement = new SurfaceLabelPlacement
+                {
+                    Pose = surfacePose,
+                    ScreenSize = group.ScreenSize,
+                    AlignToSurface = true,
+                    FitToPhysicalBounds = false
+                };
+                labelPlaced = CreateFixedLabel(text, centerPlacement, surfaceMapper.Surface.Plane);
                 if (labelPlaced)
                 {
                     centerHomographyPlaced++;
@@ -323,7 +341,13 @@ public class ARLabelPlacer : MonoBehaviour
             }
 
             // Path B: Per-block raycast
-            if (!labelPlaced && TryPlaceFixedLabel(text, screenPoint, !preserveOcrAnchorPositions))
+            if (!labelPlaced && TryPlaceFixedLabel(
+                text,
+                screenPoint,
+                !preserveOcrAnchorPositions,
+                group.ScreenSize,
+                true
+            ))
             {
                 labelPlaced = true;
                 raycastPlaced++;
@@ -1702,6 +1726,7 @@ public class ARLabelPlacer : MonoBehaviour
         {
             if (billboard != null)
             {
+                billboard.enabled = false;
                 Destroy(billboard);
             }
             label.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
@@ -1717,6 +1742,7 @@ public class ARLabelPlacer : MonoBehaviour
         {
             if (billboard != null)
             {
+                billboard.enabled = false;
                 Destroy(billboard);
             }
             label.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
