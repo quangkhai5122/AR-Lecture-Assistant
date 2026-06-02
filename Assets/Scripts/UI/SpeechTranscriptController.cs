@@ -61,7 +61,7 @@ public class SpeechTranscriptController : MonoBehaviour
         "This definition is important because it appears in later examples.",
         "Notice how the input changes before the model returns a prediction.",
         "You should add this step to your notes for the exercise.",
-        "The next section connects the formula with a practical workflow."
+        "The next section connects the formula with a practical workflow. "
     };
 
     private ISpeechToTextService speechService;
