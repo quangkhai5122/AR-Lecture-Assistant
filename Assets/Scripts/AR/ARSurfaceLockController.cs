@@ -19,14 +19,14 @@ public class ARSurfaceLockController : MonoBehaviour
     [SerializeField] private ARRaycastController raycastController;
     [SerializeField] private ARLabelPlacer labelPlacer;
     [SerializeField] private ARSurfaceOutlineRenderer outlineRenderer;
-    [SerializeField] private bool disablePlaneDetectionAfterLock = true;
+    [SerializeField] private bool disablePlaneDetectionAfterLock = false;
     [SerializeField] private PlaneDetectionMode requestedDetectionMode =
         PlaneDetectionMode.Horizontal | PlaneDetectionMode.Vertical;
-    [SerializeField] private bool preferVerticalSurfaces = true;
-    [SerializeField] private float maxVerticalSurfaceNormalY = 0.35f;
+    [SerializeField] private bool preferVerticalSurfaces = false;
+    [SerializeField] private float maxVerticalSurfaceNormalY = 1f;
     [SerializeField] private bool usePlaneRotationForLock = true;
     [SerializeField] private bool allowEstimatedSurfaceFallback = true;
-    [SerializeField] private float estimatedSurfaceFallbackDelaySeconds = 1.25f;
+    [SerializeField] private float estimatedSurfaceFallbackDelaySeconds = 0f;
 
     public event Action<ARSurfaceLockState> TrackingStateChanged;
     public event Action<Pose> SurfaceLocked;
