@@ -66,7 +66,7 @@ public class ARLabelPlacer : MonoBehaviour
     [SerializeField] private bool mergeSameLineTextBlocks = true;
     [SerializeField] private bool allowFallbackPosePlacement = false;
     [SerializeField] private float groupMaxVerticalGapRatio = 0.12f;
-    [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.98f, 0.94f, 0.64f, 0.92f);
+    [SerializeField] private Color lensOverlayBackgroundColor = new Color(0.82f, 0.84f, 0.86f, 0.92f);
     [SerializeField] private Color lensOverlayTextColor = new Color(0.09f, 0.10f, 0.11f, 0.98f);
     [SerializeField] private float lensOverlayWidthExpansion = 1.14f;
     [SerializeField] private float lensOverlayHeightExpansion = 1.08f;
@@ -1228,7 +1228,7 @@ public class ARLabelPlacer : MonoBehaviour
             button.colors = colors;
 
             string selectedText = group.Text.Trim();
-            button.onClick.AddListener(() => ShowTranslationActionMenu(selectedText, overlayCenter));
+            button.onClick.AddListener(() => ShowTranslationActionMenu(selectedText, overlayCenter, panel));
         }
 
         GameObject textObject = new GameObject("TranslatedText");
@@ -1274,7 +1274,7 @@ public class ARLabelPlacer : MonoBehaviour
         return screenOverlayCanvas;
     }
 
-    private void ShowTranslationActionMenu(string selectedText, Vector2 screenPoint)
+    private void ShowTranslationActionMenu(string selectedText, Vector2 screenPoint, GameObject selectedTarget)
     {
         if (!enableTranslationSelectionActions) return;
         if (!translationsVisible || string.IsNullOrWhiteSpace(selectedText)) return;
@@ -1290,7 +1290,7 @@ public class ARLabelPlacer : MonoBehaviour
         rect.anchorMin = Vector2.zero;
         rect.anchorMax = Vector2.zero;
         rect.pivot = new Vector2(0.5f, 0.5f);
-        Vector2 menuSize = new Vector2(Mathf.Min(380f, Screen.width * 0.82f), 88f);
+        Vector2 menuSize = new Vector2(Mathf.Min(520f, Screen.width * 0.92f), 88f);
         rect.sizeDelta = menuSize;
         float verticalOffset = screenPoint.y > Screen.height * 0.55f ? -70f : 70f;
         rect.anchoredPosition = ClampOverlayCenter(screenPoint + new Vector2(0f, verticalOffset), menuSize);
@@ -1325,6 +1325,14 @@ public class ARLabelPlacer : MonoBehaviour
             new Color(0.38f, 0.34f, 0.95f, 0.98f)
         );
         askButton.onClick.AddListener(() => AskGeminiAboutSelectedText(selectedText));
+
+        Button hideButton = CreateOverlayActionButton(
+            "HideSelectedTranslation",
+            selectedActionMenu.transform,
+            "Hide",
+            new Color(0.18f, 0.24f, 0.31f, 0.98f)
+        );
+        hideButton.onClick.AddListener(() => HideSelectedTranslation(selectedTarget));
     }
 
     private Button CreateOverlayActionButton(string name, Transform parent, string label, Color color)
@@ -1405,6 +1413,17 @@ public class ARLabelPlacer : MonoBehaviour
         }
 
         ShowGeminiAnswerPanel("Saved to notes", selectedText);
+    }
+
+    private void HideSelectedTranslation(GameObject selectedTarget)
+    {
+        HideTranslationActionMenu();
+        HideGeminiAnswerPanel();
+
+        if (selectedTarget != null)
+        {
+            Destroy(selectedTarget);
+        }
     }
 
     private async void AskGeminiAboutSelectedText(string selectedText)
@@ -2097,7 +2116,7 @@ public class ARLabelPlacer : MonoBehaviour
             if (enableTranslationSelectionActions)
             {
                 Vector2 menuPoint = ResolveWorldLabelScreenPoint(label, targetImage);
-                ShowTranslationActionMenu(focusedText, menuPoint);
+                ShowTranslationActionMenu(focusedText, menuPoint, label);
                 return;
             }
 
