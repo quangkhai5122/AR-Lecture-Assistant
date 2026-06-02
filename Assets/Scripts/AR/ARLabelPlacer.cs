@@ -1671,6 +1671,29 @@ public class ARLabelPlacer : MonoBehaviour
         return CreateFixedLabelOnAnchor(translatedText, hit.pose, targetScreenSize, anchor);
     }
 
+    private bool CreateFixedLabel(
+        string translatedText,
+        ARRaycastHit hit,
+        Vector2 targetScreenSize,
+        bool alignToSurface
+    )
+    {
+        ARAnchor anchor = anchorPlacer.PlaceAnchor(hit);
+        if (anchor == null) return false;
+
+        SurfaceLabelPlacement placement = alignToSurface
+            ? new SurfaceLabelPlacement
+            {
+                Pose = hit.pose,
+                ScreenSize = targetScreenSize,
+                AlignToSurface = true,
+                FitToPhysicalBounds = false
+            }
+            : null;
+
+        return CreateFixedLabelOnAnchor(translatedText, hit.pose, targetScreenSize, anchor, placement);
+    }
+
     private bool CreateFixedLabel(string translatedText, Pose hitPose, Vector2 targetScreenSize)
     {
         return CreateFixedLabel(translatedText, hitPose, targetScreenSize, null);
