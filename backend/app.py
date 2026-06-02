@@ -408,6 +408,8 @@ def _validate_context(payload: dict[str, Any]) -> None:
 def _validate_common_payload(payload: dict[str, Any]) -> None:
     if "mock" in payload and not isinstance(payload["mock"], bool):
         raise PipelineError("Field 'mock' must be a boolean.")
+    if "use_surface_crop_for_ocr" in payload and not isinstance(payload["use_surface_crop_for_ocr"], bool):
+        raise PipelineError("Field 'use_surface_crop_for_ocr' must be a boolean.")
     for key in ("image_width", "image_height"):
         if key in payload and (
             not isinstance(payload[key], int)

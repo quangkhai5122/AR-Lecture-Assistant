@@ -17,6 +17,7 @@ public class FramePipelineRequest
     public int image_height;
     public string ocr_provider;
     public string translation_provider;
+    public bool use_surface_crop_for_ocr = false;
 }
 
 [Serializable]

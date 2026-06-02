@@ -501,7 +501,47 @@ def test_document_surface_detects_four_of_five_sample_slides():
     assert detected >= 4
 
 
-def test_pipeline_runs_real_ocr_on_surface_crop(monkeypatch):
+def test_pipeline_real_ocr_uses_original_frame_by_default(monkeypatch):
+    service = PipelineService()
+    seen_sizes: list[tuple[int, int]] = []
+
+    def fake_recognize(
+        image_base64,
+        image_width=None,
+        image_height=None,
+        force_mock=True,
+        provider=None,
+    ):
+        image = service.document_surface_service.decode_image(image_base64)
+        seen_sizes.append(image.size)
+        return OCRResult(
+            blocks=[{"id": "ocr_1", "text": "Inside surface", "bbox": [8, 10, 120, 32], "confidence": 0.9}],
+            image_width=image.width,
+            image_height=image.height,
+            provider="fake",
+            mock_used=False,
+            warnings=[],
+        )
+
+    monkeypatch.setattr(service.ocr_service, "recognize", fake_recognize)
+
+    result = service.process_frame({
+        "frame_id": "surface_original",
+        "image_base64": _surface_image_base64(),
+        "mock": False,
+        "ocr_provider": "tesseract",
+        "translation_provider": "mock",
+    })
+
+    assert seen_sizes
+    assert seen_sizes[0] == (320, 220)
+    assert result["image_width"] == 320
+    assert result["image_height"] == 220
+    assert result["document_surface"]["method"] == "ocr_bbox_union"
+    assert result["blocks"][0]["bbox"] == [8, 10, 120, 32]
+    assert not any("surface crop" in warning for warning in result["warnings"])
+
+def test_pipeline_runs_real_ocr_on_surface_crop_when_requested(monkeypatch):
     service = PipelineService()
     seen_sizes: list[tuple[int, int]] = []
 
@@ -531,6 +571,7 @@ def test_pipeline_runs_real_ocr_on_surface_crop(monkeypatch):
         "mock": False,
         "ocr_provider": "tesseract",
         "translation_provider": "mock",
+        "use_surface_crop_for_ocr": True,
     })
 
     assert seen_sizes
@@ -538,7 +579,7 @@ def test_pipeline_runs_real_ocr_on_surface_crop(monkeypatch):
     assert seen_sizes[0][1] < 220
     assert result["image_width"] == 320
     assert result["image_height"] == 220
-    assert result["document_surface"]["method"] == "contour_quadrilateral"
+    assert result["document_surface"]["method"] == "ocr_bbox_union"
     assert result["blocks"][0]["bbox"][0] > 8
     assert any("surface crop" in warning for warning in result["warnings"])
 
@@ -859,6 +900,19 @@ def test_invalid_pipeline_request_returns_400():
     assert response.status_code == 400
     assert response.get_json()["error"]["code"] == "pipeline_error"
 
+
+def test_pipeline_rejects_non_boolean_surface_crop_flag():
+    client = app.test_client()
+    response = client.post("/pipeline/frame", json={
+        "frame_id": "bad_surface_crop_flag",
+        "mock": True,
+        "target_language": "vi",
+        "use_surface_crop_for_ocr": "true",
+    })
+    data = response.get_json()
+    assert response.status_code == 400
+    assert data["error"]["code"] == "pipeline_error"
+    assert "use_surface_crop_for_ocr" in data["error"]["message"]
 
 def test_translate_endpoint_validates_texts_shape():
     client = app.test_client()

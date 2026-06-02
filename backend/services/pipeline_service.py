@@ -38,9 +38,15 @@ class PipelineService:
         surface_start = time.perf_counter()
         contour_surface = self.document_surface_service.detect_from_image(surface_image)
         surface_ms = self._elapsed_ms(surface_start)
+        use_surface_crop_for_ocr = payload.get("use_surface_crop_for_ocr") is True
 
         ocr_start = time.perf_counter()
-        ocr_result = self._recognize_with_optional_surface_crop(payload, force_mock, surface_image, contour_surface)
+        ocr_result = self._recognize_with_optional_surface_crop(
+            payload,
+            force_mock,
+            surface_image,
+            contour_surface if use_surface_crop_for_ocr else None,
+        )
         ocr_ms = self._elapsed_ms(ocr_start)
 
         translation_start = time.perf_counter()
@@ -52,11 +58,11 @@ class PipelineService:
         )
         translation_ms = self._elapsed_ms(translation_start)
 
-        document_surface = contour_surface or self.document_surface_service.estimate_from_ocr_blocks(
+        document_surface = self.document_surface_service.estimate_from_ocr_blocks(
             ocr_result.blocks,
             ocr_result.image_width,
             ocr_result.image_height,
-        )
+        ) or contour_surface
 
         warnings = [*ocr_result.warnings, *translation_result.warnings]
         if translation_result.cache_hits:

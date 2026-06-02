@@ -24,6 +24,11 @@
       "type": "string",
       "enum": ["mock", "libretranslate", "google"],
       "description": "Optional per-request override. If omitted, backend uses TRANSLATION_PROVIDER env var in real mode."
+    },
+    "use_surface_crop_for_ocr": {
+      "type": "boolean",
+      "default": false,
+      "description": "Opt-in only. When true, OCR runs on the detected document surface crop and maps boxes back to the original frame."
     }
   },
   "allOf": [

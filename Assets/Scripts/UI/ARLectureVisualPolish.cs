@@ -16,8 +16,8 @@ public class ARLectureVisualPolish : MonoBehaviour
     private static readonly Color ClearColor = new Color(1f, 1f, 1f, 0.96f);
     private static readonly Color SuccessColor = new Color(0f, 0f, 0f, 0.72f);
     private static readonly Color TextColor = new Color(0.94f, 0.96f, 1f, 1f);
-    private static readonly Color LensOverlayColor = new Color(0.92f, 0.92f, 0.88f, 0.78f);
-    private static readonly Color LensTextColor = new Color(0.14f, 0.15f, 0.17f, 0.96f);
+    private static readonly Color LensOverlayColor = new Color(0.98f, 0.94f, 0.64f, 0.88f);
+    private static readonly Color LensTextColor = new Color(0.08f, 0.09f, 0.10f, 0.98f);
 
     private bool applied;
 
