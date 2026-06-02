@@ -180,6 +180,11 @@ public class ButtonController : MonoBehaviour
         string step = "init";
         try
         {
+            labelPlacer?.SetTranslationsVisible(false);
+            labelPlacer?.ClearFixedLabels();
+            labelPlacer?.SetTranslationsVisible(true);
+            await System.Threading.Tasks.Task.Yield();
+
             step = "1-capture";
             PipelineResponse response = await RunPipelineAsync();
             debugPanel?.UpdatePipelineResponse(response);
@@ -973,7 +978,7 @@ public class ButtonController : MonoBehaviour
             return uri.Port.ToString();
         }
 
-        return "5050";
+        return "5000";
     }
 
     private string GetBackendHostPortForMessage()

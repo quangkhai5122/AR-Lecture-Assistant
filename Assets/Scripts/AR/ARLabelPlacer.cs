@@ -1752,7 +1752,7 @@ public class ARLabelPlacer : MonoBehaviour
                 billboard.enabled = false;
                 Destroy(billboard);
             }
-            label.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
+            label.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
         }
         else if (faceCameraForReadability)
         {
@@ -1768,7 +1768,7 @@ public class ARLabelPlacer : MonoBehaviour
                 billboard.enabled = false;
                 Destroy(billboard);
             }
-            label.transform.localRotation = Quaternion.Euler(-90f, 0f, 0f);
+            label.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
         }
 
         var textComp = label.GetComponentInChildren<TextMeshProUGUI>();
@@ -1988,9 +1988,9 @@ public class ARLabelPlacer : MonoBehaviour
         scaleX = Mathf.Clamp(scaleX, 0.04f, 4f);
         scaleY = Mathf.Clamp(scaleY, 0.04f, 4f);
 
-        // The fixed-label canvas is rotated onto the surface: local X is text width,
-        // local Z is text height, and local Y remains the surface-normal offset axis.
-        label.transform.localScale = new Vector3(scaleX, 1f, scaleY);
+        // The world-space canvas is an XY plane; after rotation onto the surface,
+        // X remains text width and Y remains text height.
+        label.transform.localScale = new Vector3(scaleX, scaleY, 1f);
     }
 
     private void FitLabelPanel(GameObject label, TextMeshProUGUI textComp, Vector2 targetScreenSize)

@@ -7,14 +7,14 @@ using UnityEngine.Networking;
 
 /// <summary>
 /// HTTP client cho toàn bộ backend Flask: health, pipeline, OCR-only, translate-only.
-/// Trên điện thoại, backendBaseUrl phải dùng IP LAN của laptop, ví dụ http://192.168.1.20:5050.
+/// Trên điện thoại, backendBaseUrl phải dùng IP LAN của laptop, ví dụ http://192.168.1.20:5000.
 /// </summary>
 public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 {
-    public const string DefaultAndroidLanBackendUrl = "http://192.168.1.16:5050";
+    public const string DefaultAndroidLanBackendUrl = "http://192.168.1.12:5000";
     private const string AndroidLanBackendUrl = DefaultAndroidLanBackendUrl;
-    private const string DefaultLoopbackBaseUrl = "http://127.0.0.1:5050";
-    private const string DefaultLoopbackFrameUrl = "http://127.0.0.1:5050/pipeline/frame";
+    private const string DefaultLoopbackBaseUrl = "http://127.0.0.1:5000";
+    private const string DefaultLoopbackFrameUrl = "http://127.0.0.1:5000/pipeline/frame";
 
     [Header("Backend")]
     public string backendBaseUrl = AndroidLanBackendUrl;
@@ -657,7 +657,7 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
              error.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0 ||
              error.IndexOf("resolve", StringComparison.OrdinalIgnoreCase) >= 0))
         {
-            string port = TryGetUrlPort(url, "5050");
+            string port = TryGetUrlPort(url, "5000");
             return "Check that the phone and backend machine are on the same Wi-Fi, " +
                    "the backend is listening on 0.0.0.0:" + port + ", " +
                    "and the firewall allows TCP " + port + ". Current URL: " + url + ".";
