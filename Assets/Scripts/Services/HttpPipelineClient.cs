@@ -11,13 +11,15 @@ using UnityEngine.Networking;
 /// </summary>
 public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 {
-    public const string DefaultAndroidLanBackendUrl = "http://192.168.1.12:5000";
+    public const string DefaultAndroidLanBackendUrl = "http://10.11.238.27:5000";
     private const string AndroidLanBackendUrl = DefaultAndroidLanBackendUrl;
     private const string DefaultLoopbackBaseUrl = "http://127.0.0.1:5000";
     private const string DefaultLoopbackFrameUrl = "http://127.0.0.1:5000/pipeline/frame";
 
     [Header("Backend")]
     public string backendBaseUrl = AndroidLanBackendUrl;
+    [Tooltip("Keep enabled for demo builds so changing DefaultAndroidLanBackendUrl is enough after switching Wi-Fi networks.")]
+    public bool useDefaultBackendBaseUrl = true;
     public string endpointUrl = DefaultLoopbackFrameUrl;
     public string pipelineFramePath = "/pipeline/frame";
     public string pipelineAliasPath = "/pipeline";
@@ -602,7 +604,7 @@ public class HttpPipelineClient : MonoBehaviour, IPipelineClient
 
     private void NormalizeConfiguration()
     {
-        backendBaseUrl = string.IsNullOrWhiteSpace(backendBaseUrl)
+        backendBaseUrl = useDefaultBackendBaseUrl || string.IsNullOrWhiteSpace(backendBaseUrl)
             ? AndroidLanBackendUrl
             : backendBaseUrl.Trim().TrimEnd('/');
 
