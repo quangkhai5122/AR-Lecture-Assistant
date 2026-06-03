@@ -73,6 +73,7 @@ public class SpeechTranscriptController : MonoBehaviour
     private Button exportNotesButton;
     private Button deleteNotesButton;
     private Button summarizeButton;
+    private Button listenToggleButton;
     private Button closeButton;
     private TextMeshProUGUI transcriptText;
     private TextMeshProUGUI statusText;
@@ -97,6 +98,7 @@ public class SpeechTranscriptController : MonoBehaviour
     private float nextMockPhraseAt;
     private float nextUiRefreshAt;
     private float restartSpeechAt = -1f;
+    private string activeMicrophoneDeviceName;
 
     private void Start()
     {
@@ -109,11 +111,11 @@ public class SpeechTranscriptController : MonoBehaviour
 
         if (autoStartListening)
         {
-            Debug.Log("[SpeechTranscript] autoStartListening is ignored; press Transcript to start listening.");
+            Debug.Log("[SpeechTranscript] autoStartListening is ignored; open Transcript and press Start mic to listen.");
         }
 
         SetStatus("Transcript ready");
-        UpdateTranscriptToggleLabel();
+        UpdateTranscriptControls();
     }
 
     public void EnsureTranscriptUiVisible()
@@ -122,7 +124,7 @@ public class SpeechTranscriptController : MonoBehaviour
 
         if (toggleButton != null)
         {
-            toggleButton.gameObject.SetActive(true);
+            SetTranscriptLauncherVisible();
             return;
         }
 
@@ -168,6 +170,7 @@ public class SpeechTranscriptController : MonoBehaviour
         if (exportNotesButton != null) exportNotesButton.onClick.RemoveListener(ExportNotes);
         if (deleteNotesButton != null) deleteNotesButton.onClick.RemoveListener(DeleteNotes);
         if (summarizeButton != null) summarizeButton.onClick.RemoveListener(OnSummarizePressed);
+        if (listenToggleButton != null) listenToggleButton.onClick.RemoveListener(OnListenTogglePressed);
         if (closeButton != null) closeButton.onClick.RemoveListener(HideModal);
 
         StopListening();
@@ -181,7 +184,7 @@ public class SpeechTranscriptController : MonoBehaviour
 
         isListening = true;
         waitingForPermission = false;
-        UpdateTranscriptToggleLabel();
+        UpdateTranscriptControls();
         uiDirty = true;
 
         if (useBackendSpeechTranslation)
@@ -218,10 +221,7 @@ public class SpeechTranscriptController : MonoBehaviour
             backendSpeechCoroutine = null;
         }
         StopSpeechStream();
-        if (Microphone.IsRecording(null))
-        {
-            Microphone.End(null);
-        }
+        StopActiveMicrophone();
         speechService?.StopListening();
 
         if (wasListening)
@@ -229,8 +229,49 @@ public class SpeechTranscriptController : MonoBehaviour
             SetStatus("Transcript paused");
         }
 
-        UpdateTranscriptToggleLabel();
+        UpdateTranscriptControls();
         uiDirty = true;
+    }
+
+    private void MarkListeningInactive(string status)
+    {
+        isListening = false;
+        usingMockProvider = false;
+        waitingForPermission = false;
+        restartSpeechAt = -1f;
+        activeMicrophoneDeviceName = null;
+        SetStatus(status);
+        UpdateTranscriptControls();
+        uiDirty = true;
+    }
+
+    private void StopActiveMicrophone()
+    {
+        string deviceName = activeMicrophoneDeviceName;
+        if (!string.IsNullOrEmpty(deviceName))
+        {
+            EndMicrophoneRecording(deviceName);
+        }
+
+        if (Microphone.IsRecording(null))
+        {
+            Microphone.End(null);
+        }
+
+        activeMicrophoneDeviceName = null;
+    }
+
+    private void EndMicrophoneRecording(string deviceName)
+    {
+        if (Microphone.IsRecording(deviceName))
+        {
+            Microphone.End(deviceName);
+        }
+
+        if (string.Equals(activeMicrophoneDeviceName, deviceName, StringComparison.Ordinal))
+        {
+            activeMicrophoneDeviceName = null;
+        }
     }
 
     private void StartBackendSpeechTranslation()
@@ -247,7 +288,7 @@ public class SpeechTranscriptController : MonoBehaviour
 
         if (Microphone.devices == null || Microphone.devices.Length == 0)
         {
-            SetStatus("No microphone device found");
+            MarkListeningInactive("No microphone device found");
             return;
         }
 
@@ -314,7 +355,7 @@ public class SpeechTranscriptController : MonoBehaviour
     {
         if (!useMockInEditorOrUnsupported)
         {
-            SetStatus("Speech recognition is unavailable on this platform");
+            MarkListeningInactive("Speech recognition is unavailable on this platform");
             return;
         }
 
@@ -367,7 +408,7 @@ public class SpeechTranscriptController : MonoBehaviour
             string message = openTask.Exception != null && openTask.Exception.InnerException != null
                 ? openTask.Exception.InnerException.Message
                 : "Could not open speech stream";
-            SetStatus(message);
+            MarkListeningInactive(message);
             backendSpeechCoroutine = null;
             yield break;
         }
@@ -375,9 +416,18 @@ public class SpeechTranscriptController : MonoBehaviour
         string deviceName = ResolveMicrophoneDeviceName();
         int sampleRateHz = ResolveMicrophoneSampleRate(deviceName);
         int clipLengthSeconds = Mathf.Max(2, Mathf.CeilToInt(audioChunkSeconds * 3f));
+        activeMicrophoneDeviceName = deviceName;
         AudioClip clip = Microphone.Start(deviceName, true, clipLengthSeconds, sampleRateHz);
+        if (clip == null)
+        {
+            MarkListeningInactive("Microphone did not start");
+            backendSpeechCoroutine = null;
+            yield break;
+        }
+
         int readPosition = 0;
         float sendInterval = Mathf.Max(0.05f, streamingSendIntervalMs / 1000f);
+        bool streamStoppedUnexpectedly = false;
         SetStatus("Streaming Google STT");
 
         while (isListening && useBackendSpeechTranslation && useStreamingSpeech && !token.IsCancellationRequested)
@@ -386,6 +436,7 @@ public class SpeechTranscriptController : MonoBehaviour
 
             if (speechStreamSocket == null || speechStreamSocket.State != WebSocketState.Open)
             {
+                streamStoppedUnexpectedly = true;
                 break;
             }
 
@@ -409,16 +460,18 @@ public class SpeechTranscriptController : MonoBehaviour
                     ? sendTask.Exception.InnerException.Message
                     : "Speech stream send failed";
                 SetStatus(message);
+                streamStoppedUnexpectedly = true;
                 break;
             }
         }
 
-        if (Microphone.IsRecording(deviceName))
-        {
-            Microphone.End(deviceName);
-        }
+        EndMicrophoneRecording(deviceName);
 
         StopSpeechStream();
+        if (streamStoppedUnexpectedly && isListening)
+        {
+            MarkListeningInactive("Speech stream stopped");
+        }
         backendSpeechCoroutine = null;
     }
 
@@ -546,10 +599,11 @@ public class SpeechTranscriptController : MonoBehaviour
         }
 
         int clipLengthSeconds = Mathf.Max(30, Mathf.CeilToInt(maxUtteranceSeconds) + 8);
+        activeMicrophoneDeviceName = deviceName;
         AudioClip clip = Microphone.Start(deviceName, true, clipLengthSeconds, sampleRateHz);
         if (clip == null)
         {
-            SetStatus("Microphone did not start");
+            MarkListeningInactive("Microphone did not start");
             backendSpeechCoroutine = null;
             yield break;
         }
@@ -562,11 +616,8 @@ public class SpeechTranscriptController : MonoBehaviour
 
         if (isListening && Microphone.GetPosition(deviceName) <= 0)
         {
-            SetStatus("Microphone did not start");
-            if (Microphone.IsRecording(deviceName))
-            {
-                Microphone.End(deviceName);
-            }
+            MarkListeningInactive("Microphone did not start");
+            EndMicrophoneRecording(deviceName);
             backendSpeechCoroutine = null;
             yield break;
         }
@@ -575,6 +626,7 @@ public class SpeechTranscriptController : MonoBehaviour
         int readPosition = Microphone.GetPosition(deviceName);
         var utteranceSamples = new List<float>(Mathf.Max(1, sampleRateHz * channels * 4));
         bool hasSpeech = false;
+        bool microphoneStoppedUnexpectedly = false;
         float lastSpeechAt = -1f;
         float nextIdleStatusAt = 0f;
         float readInterval = Mathf.Clamp(microphoneReadIntervalSeconds, 0.06f, 0.25f);
@@ -589,6 +641,7 @@ public class SpeechTranscriptController : MonoBehaviour
             if (!Microphone.IsRecording(deviceName))
             {
                 SetStatus("Microphone stopped");
+                microphoneStoppedUnexpectedly = true;
                 break;
             }
 
@@ -665,9 +718,10 @@ public class SpeechTranscriptController : MonoBehaviour
             }
         }
 
-        if (Microphone.IsRecording(deviceName))
+        EndMicrophoneRecording(deviceName);
+        if (microphoneStoppedUnexpectedly && isListening)
         {
-            Microphone.End(deviceName);
+            MarkListeningInactive("Microphone stopped");
         }
 
         backendSpeechCoroutine = null;
@@ -992,6 +1046,7 @@ public class SpeechTranscriptController : MonoBehaviour
         BuildActionRow(modalRoot.transform);
 
         modalRoot.SetActive(false);
+        UpdateTranscriptControls();
         RefreshTranscriptText();
     }
 
@@ -1004,8 +1059,17 @@ public class SpeechTranscriptController : MonoBehaviour
         titleRect.anchorMax = new Vector2(1f, 1f);
         titleRect.pivot = new Vector2(0.5f, 1f);
         titleRect.offsetMin = new Vector2(24f, -72f);
-        titleRect.offsetMax = new Vector2(-92f, -18f);
+        titleRect.offsetMax = new Vector2(-284f, -18f);
         title.alignment = TextAlignmentOptions.Left;
+
+        listenToggleButton = CreateButton("TranscriptListenToggleButton", parent, "Start mic", new Color(0.08f, 0.58f, 0.40f, 0.96f));
+        RectTransform listenRect = listenToggleButton.GetComponent<RectTransform>();
+        listenRect.anchorMin = new Vector2(1f, 1f);
+        listenRect.anchorMax = new Vector2(1f, 1f);
+        listenRect.pivot = new Vector2(1f, 1f);
+        listenRect.anchoredPosition = new Vector2(-92f, -18f);
+        listenRect.sizeDelta = new Vector2(170f, 56f);
+        listenToggleButton.onClick.AddListener(OnListenTogglePressed);
 
         closeButton = CreateButton("TranscriptCloseButton", parent, "X", new Color(0.16f, 0.18f, 0.22f, 0.96f));
         RectTransform closeRect = closeButton.GetComponent<RectTransform>();
@@ -1203,24 +1267,80 @@ public class SpeechTranscriptController : MonoBehaviour
         }
     }
 
-    private void UpdateTranscriptToggleLabel()
+    private void SetButtonStyle(Button button, Color buttonColor, Color textColor)
     {
-        SetButtonLabel(toggleButton, isListening ? "Stop" : "Transcript");
+        if (button == null) return;
+
+        Image image = button.GetComponent<Image>();
+        if (image != null)
+        {
+            image.color = buttonColor;
+        }
+
+        ColorBlock colors = button.colors;
+        colors.normalColor = buttonColor;
+        colors.highlightedColor = Color.Lerp(buttonColor, Color.white, 0.14f);
+        colors.pressedColor = Color.Lerp(buttonColor, Color.black, 0.22f);
+        colors.selectedColor = colors.highlightedColor;
+        button.colors = colors;
+
+        TextMeshProUGUI text = button.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (text != null)
+        {
+            text.color = textColor;
+        }
+    }
+
+    private void UpdateTranscriptControls()
+    {
+        SetButtonLabel(toggleButton, isListening ? "Live" : "Transcript");
+
+        string listenLabel = waitingForPermission ? "Cancel" : (isListening ? "Pause mic" : "Start mic");
+        Color listenColor = waitingForPermission
+            ? new Color(0.64f, 0.45f, 0.16f, 0.96f)
+            : (isListening ? new Color(0.82f, 0.24f, 0.30f, 0.96f) : new Color(0.08f, 0.58f, 0.40f, 0.96f));
+
+        SetButtonLabel(listenToggleButton, listenLabel);
+        SetButtonStyle(listenToggleButton, listenColor, Color.white);
+
+        if (statusText != null)
+        {
+            statusText.color = isListening
+                ? new Color(0.62f, 0.86f, 1f, 1f)
+                : new Color(0.72f, 0.78f, 0.86f, 1f);
+        }
+
+        SetTranscriptLauncherVisible();
+    }
+
+    private void SetTranscriptLauncherVisible()
+    {
+        if (toggleButton == null) return;
+
+        bool modalActive = modalRoot != null && modalRoot.activeSelf;
+        toggleButton.gameObject.SetActive(showTranscriptUi && !modalActive);
     }
 
     private void OnTranscriptTogglePressed()
     {
         if (modalRoot == null) return;
 
-        if (!isListening)
+        modalRoot.SetActive(true);
+        UpdateTranscriptControls();
+
+        uiDirty = true;
+        RefreshTranscriptText();
+    }
+
+    private void OnListenTogglePressed()
+    {
+        if (isListening)
         {
-            modalRoot.SetActive(true);
-            StartListening();
+            StopListening();
         }
         else
         {
-            StopListening();
-            modalRoot.SetActive(false);
+            StartListening();
         }
 
         uiDirty = true;
@@ -1230,6 +1350,7 @@ public class SpeechTranscriptController : MonoBehaviour
     private void HideModal()
     {
         if (modalRoot != null) modalRoot.SetActive(false);
+        UpdateTranscriptControls();
     }
 
     private void AddCurrentTranscriptToNote()
