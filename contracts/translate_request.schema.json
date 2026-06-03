@@ -9,7 +9,7 @@
     "translation_provider": {
       "type": "string",
       "enum": ["mock", "libretranslate", "google"],
-      "description": "Optional per-request override. If omitted, backend uses TRANSLATION_PROVIDER env var in real mode."
+      "description": "Optional per-request override. If omitted, backend uses TRANSLATION_PROVIDER env var in real mode.."
     },
     "texts": {
       "type": "array",
